@@ -6,6 +6,8 @@ Mail assistant 是一个面向 Gmail 的智能邮箱整理助手。
 ## Demo Video
 
 [Watch the demo video](./AI%20Email%20Organization%20Assistant.mp4)
+or 
+https://fragrant-finicky-whippet.clueso.site/share/593aec2f-d2ca-4490-881f-6f8484074ccb
 
 ---
 
