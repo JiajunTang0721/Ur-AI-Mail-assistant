@@ -1,0 +1,56 @@
+.popup-shell {
+  width: 320px;
+  padding: 18px;
+  font-family:
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  color: #162133;
+  background: linear-gradient(180deg, #f6f9ff 0%, #eef3fb 100%);
+}
+
+.popup-badge {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(43, 122, 242, 0.12);
+  color: #2b7af2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.popup-shell h1 {
+  margin: 12px 0 8px;
+  font-size: 22px;
+}
+
+.popup-copy,
+.popup-status {
+  margin: 0;
+  color: #6b7a92;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.popup-actions {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 12px;
+}
+
+.popup-actions button {
+  min-height: 40px;
+  border: none;
+  border-radius: 12px;
+  background: #2b7af2;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.popup-actions button.secondary {
+  background: rgba(43, 122, 242, 0.12);
+  color: #2b7af2;
+}

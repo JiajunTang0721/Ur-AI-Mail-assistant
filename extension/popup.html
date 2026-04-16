@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>邮件重点助手</title>
+  </head>
+  <body>
+    <main class="popup-shell">
+      <div class="popup-badge">Gmail + FastAPI + LLM</div>
+      <h1>邮件重点助手</h1>
+      <p class="popup-copy">
+        扩展会先通过 Gmail OAuth 读取最近收件箱邮件，再交给 FastAPI 和 LLM 分析。
+      </p>
+      <div class="popup-actions">
+        <button id="open-gmail" type="button">打开 Gmail</button>
+        <button id="auth-gmail" type="button">连接 Gmail</button>
+        <button id="toggle-panel" class="secondary" type="button">打开右侧助手</button>
+      </div>
+      <p class="popup-status" id="popup-status">正在检查 Gmail 授权状态…</p>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

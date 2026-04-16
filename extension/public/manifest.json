@@ -1,0 +1,32 @@
+﻿{
+  "manifest_version": 3,
+  "name": "Mail assistant",
+  "description": "A Chrome Extension MV3 assistant for Gmail prioritization and AI summaries.",
+  "version": "0.1.0",
+  "permissions": ["storage", "tabs", "scripting", "identity"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://gmail.googleapis.com/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "oauth2": {
+    "client_id": "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "閭欢閲嶇偣鍔╂墜"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+

@@ -1,0 +1,3213 @@
+  const rerankActionDisabled = state.isSyncing || isSyncCoolingDown()
+  const rerankActionLabel = getSyncActionLabel('????')
+const ROOT_ID = 'lma-ext-root'
+const CUSTOM_SENDER = '__custom_sender__'
+const CUSTOM_FOCUS = '__custom_focus__'
+const STORAGE_KEY = 'lma-extension-panel-state'
+const STORAGE_VERSION = 2
+const DEFAULT_ACCOUNT_KEY = 'local-default'
+const INSTANCE_ID = `lma-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const SYNC_ACTION_COOLDOWN_MS = 8000
+
+const TAB_LABELS = {
+  today_focus: '楂樹紭鍏堢骇',
+  todo: '寰呭鐞?,
+  due_soon: '48h 鍒版湡',
+  ignorable: '鍙拷鐣?,
+} as const
+
+const FOCUS_OPTIONS = ['鎷涜仒', '宸ヤ綔', '瀛︿笟'] as const
+
+const HIGH_KEYWORDS = [
+  'urgent',
+  'asap',
+  'deadline',
+  'today',
+  'tonight',
+  'confirm',
+  'interview',
+  'submit',
+  'review',
+  'approval',
+  'approve',
+  '鎴',
+  '浠婂ぉ',
+  '浠婃櫄',
+  '纭',
+  '闈㈣瘯',
+  '鎻愪氦',
+  '瀹￠槄',
+  '瀹℃壒',
+  '琛ラ綈',
+]
+
+const DUE_KEYWORDS = [
+  '48h',
+  '48 hours',
+  'today',
+  'tonight',
+  'tomorrow',
+  '鏄庡ぉ',
+  '浠婂ぉ',
+  '浠婃櫄',
+  '鏈懆',
+  'deadline',
+  'due',
+]
+
+const LOW_KEYWORDS = [
+  'newsletter',
+  'digest',
+  'weekly',
+  'unsubscribe',
+  'promotion',
+  'sale',
+  'linkedin jobs',
+  'recommended jobs',
+  '鎺ㄨ崘鑱屼綅',
+  '鑱屼綅鎺ㄨ崘',
+  '鍛ㄦ姤',
+  '璁㈤槄',
+  '璧勮',
+  'events & opportunities',
+  'this week at',
+  'terms of use',
+  'privacy statement',
+  'latest results',
+  'daily dose',
+  'event',
+  'opportunities',
+  'deal',
+]
+
+type TabKey = keyof typeof TAB_LABELS
+type Priority = 'high' | 'medium' | 'low'
+type FilterSectionKey = 'senders' | 'history' | 'focus'
+type SenderHistoryEntry = {
+  senderName: string
+  count: number
+}
+
+type SenderProfile = {
+  senderName: string
+  openedCount: number
+  processedCount: number
+  importantVotes: number
+  notImportantVotes: number
+  mutedVotes: number
+  lastPriority?: Priority
+  lastTab?: TabKey
+}
+
+type MessageHistoryEntry = {
+  messageId: string
+  threadId: string
+  senderName: string
+  senderEmail?: string
+  subject: string
+  briefSubject: string
+  summary: string
+  aiSummary: string
+  aiReason: string
+  actionLabel?: string
+  reasonTags: string[]
+  focusAreas: string[]
+  aggregationKey?: string
+  aggregationLabel?: string
+  priority: Priority
+  tab: TabKey
+  isHighPriority?: boolean
+  isTodo?: boolean
+  isDueSoon?: boolean
+  isIgnorable?: boolean
+  sortScore?: number
+  deadlineLabel?: string
+  openedCount: number
+  processed: boolean
+  feedback?: 'important' | 'not_important' | 'muted'
+  lastAnalyzedAt: string
+}
+
+type CachedAnalysisState = {
+  payload: SyncPayload
+  mailSignature: string
+  preferenceSignature: string
+  savedAt: string
+}
+
+type SyncHints = {
+  accountKey?: string
+  analysisMode?: 'incremental' | 'rerank' | 'resummary'
+  selectedSenders: string[]
+  selectedFocuses: string[]
+  customSenderValue?: string
+  customFocusValue?: string
+  importantSenderNames: string[]
+  notImportantSenderNames: string[]
+  mutedSenderNames: string[]
+  senderHistory: SenderHistoryEntry[]
+  senderProfiles: SenderProfile[]
+  recentHistory: MessageHistoryEntry[]
+  processedMessageIds: string[]
+}
+
+type SyncPayload = {
+  generatedAt: string
+  engine: 'llm' | 'rules'
+  overview: {
+    highPriorityCount: number
+    todoCount: number
+    dueSoon48hCount: number
+    ignorableCount: number
+  }
+  items: Array<{
+    messageId: string
+    threadId?: string | null
+    senderName: string
+    senderEmail?: string | null
+    subject: string
+    briefSubject?: string | null
+    summary: string
+    aiSummary: string
+    aiReason?: string | null
+    deadlineLabel?: string | null
+    timeText?: string | null
+    priority: Priority
+    tab: TabKey
+    isHighPriority?: boolean
+    isTodo?: boolean
+    isDueSoon?: boolean
+    isIgnorable?: boolean
+    actionLabel?: string | null
+    reasonTags: string[]
+    focusAreas: string[]
+    aggregationKey?: string | null
+    aggregationLabel?: string | null
+    sortScore?: number | null
+  }>
+}
+
+type RuntimeMessage =
+  | { type: 'LMA_TOGGLE_PANEL' }
+  | { type: 'LMA_AUTH_GMAIL' }
+  | { type: 'LMA_SYNC_GMAIL_ANALYSIS'; hints: SyncHints }
+  | { type: 'LMA_REFRESH_MAIL_SUMMARY'; messageId: string; hints: SyncHints }
+  | { type: 'LMA_GET_GMAIL_AUTH_STATE' }
+
+type RuntimeResponse = {
+  ok: boolean
+  message?: string
+  error?: string
+  requiresAuth?: boolean
+  accountKey?: string
+  payload?: SyncPayload
+}
+
+type StorageAreaLike = {
+  get: (
+    keys: string | string[] | Record<string, unknown>,
+    callback: (items: Record<string, unknown>) => void,
+  ) => void
+  set: (items: Record<string, unknown>, callback?: () => void) => void
+}
+
+type ChromeContentLike = {
+  runtime?: {
+    lastError?: { message?: string }
+    onMessage?: {
+      addListener: (
+        listener: (
+          message: RuntimeMessage,
+          sender: unknown,
+          sendResponse: (response: RuntimeResponse) => void,
+        ) => boolean | void,
+      ) => void
+    }
+    sendMessage?: (
+      message: RuntimeMessage,
+      callback?: (response: RuntimeResponse) => void,
+    ) => void
+  }
+  storage?: {
+    local?: StorageAreaLike
+  }
+}
+
+type BootstrapWindow = typeof globalThis & {
+  chrome?: ChromeContentLike
+  __LMA_EXT_BOOTSTRAPPED__?: boolean
+}
+
+type MailItem = {
+  messageId: string
+  threadId: string
+  senderName: string
+  senderEmail?: string
+  subject: string
+  briefSubject: string
+  summary: string
+  aiSummary: string
+  aiReason: string
+  deadlineLabel?: string
+  timeText: string
+  priority: Priority
+  tab: TabKey
+  isHighPriority: boolean
+  isTodo: boolean
+  isDueSoon: boolean
+  isIgnorable: boolean
+  actionLabel?: string
+  reasonTags: string[]
+  focusAreas: string[]
+  aggregationKey?: string
+  aggregationLabel?: string
+  sortScore?: number
+}
+
+type VisibleEntry =
+  | { kind: 'single'; item: MailItem }
+  | { kind: 'bundle'; key: string; items: MailItem[] }
+
+type PersistedState = {
+  clickCounts: Record<string, number>
+  customSenderEntries: string[]
+  customFocusEntries: string[]
+  processedMessageIds: string[]
+  importantSenderNames: string[]
+  notImportantSenderNames: string[]
+  mutedSenderNames: string[]
+  selectedSenders: string[]
+  selectedFocuses: string[]
+  customSenderValue: string
+  customFocusValue: string
+  activeTab: TabKey
+  analysisCache?: CachedAnalysisState
+  analysisHistory: Record<string, MessageHistoryEntry>
+  needsRerank: boolean
+  hiddenMessageIds: string[]
+  feedbackHistory: Array<{
+    senderName: string
+    preference: 'important' | 'not_important' | 'muted'
+    updatedAt: string
+  }>
+}
+
+type PersistedStore = {
+  version: number
+  lastAccountKey?: string
+  accounts: Record<string, PersistedState>
+}
+
+type PanelState = PersistedState & {
+  isOpen: boolean
+  activeTab: TabKey
+  expandedBundleKey: string | null
+  analysisItems: MailItem[]
+  syncEngine: 'llm' | 'rules' | null
+  syncError: string
+  isSyncing: boolean
+  requiresAuth: boolean
+  syncStatusMessage: string
+  syncCooldownUntil: number
+  syncedMailCount: number
+  currentAccountKey: string | null
+  preferencesLoaded: boolean
+  needsRerank: boolean
+  resummarizingMessageIds: string[]
+  removingMessageIds: string[]
+  feedbackAcknowledgements: Record<
+    string,
+    {
+      type: 'important' | 'not_important' | 'less' | 'hide'
+      message: string
+      pendingHideUntil?: number
+    }
+  >
+  priorityPreview: Record<string, Priority>
+  priorityAnimations: Record<string, { from: Priority; to: Priority }>
+  expandedSections: Record<FilterSectionKey, boolean>
+}
+
+type ViewportAnchor = {
+  cardId?: string
+  behavior?: 'preserve' | 'follow'
+}
+
+type ViewportSnapshot = {
+  scrollTop: number
+  anchorCardId?: string
+  anchorViewportOffset?: number
+  followBehavior: 'preserve' | 'follow'
+}
+
+const bootstrapWindow = globalThis as BootstrapWindow
+const chromeApi = bootstrapWindow.chrome
+let syncCooldownTimer: number | null = null
+
+const normalizeRuntimeError = (error: string) => {
+  const message = error.trim()
+
+  if (message.toLowerCase().includes('extension context invalidated')) {
+    return '鎵╁睍涓婁笅鏂囧凡澶辨晥銆傞€氬父鏄綘鍒氬垰閲嶈浇浜嗘墿灞曪紝浣嗗綋鍓?Gmail 椤甸潰杩樻寕鐫€鏃ц剼鏈€傝鍒锋柊 Gmail 椤甸潰鍚庡啀閲嶈瘯銆?
+  }
+
+  if (message.toLowerCase().includes('oauth2 not granted or revoked')) {
+    return '褰撳墠杩樻病鏈夊畬鎴?Gmail 鎺堟潈锛屾垨鑰呬綘涔嬪墠鐨勬巿鏉冨凡澶辨晥銆傝閲嶆柊鐐瑰嚮鈥滆繛鎺?Gmail鈥濄€?
+  }
+
+  if (message.toLowerCase().includes('the user did not approve access')) {
+    return '浣犲垰鎵嶅彇娑堜簡 Gmail 鎺堟潈锛屾墍浠ュ姪鎵嬭繕涓嶈兘璇诲彇鐪熷疄閭欢銆傝閲嶆柊鐐瑰嚮鈥滆繛鎺?Gmail鈥濄€?
+  }
+
+  if (message.toLowerCase().includes('failed to fetch')) {
+    return '褰撳墠杩炰笉鍒版湰鍦板垎鏋愬悗绔€傝纭 FastAPI 姝ｅ湪 127.0.0.1:8010 杩愯锛屽苟涓旀墿灞曞凡缁忛噸鏂板姞杞姐€?
+  }
+
+  return message
+}
+
+const sendRuntimeMessage = (message: RuntimeMessage) =>
+  new Promise<RuntimeResponse>((resolve) => {
+    if (!chromeApi?.runtime?.sendMessage) {
+      resolve({
+        ok: false,
+        error: '褰撳墠椤甸潰鎷夸笉鍒版墿灞曞悗鍙版秷鎭兘鍔涳紝璇峰厛閲嶆柊鍔犺浇鎵╁睍銆?,
+      })
+      return
+    }
+
+    try {
+      chromeApi?.runtime?.sendMessage?.(message, (response) => {
+        const lastError = chromeApi?.runtime?.lastError?.message
+
+        if (lastError) {
+          resolve({
+            ok: false,
+            error: normalizeRuntimeError(`鎵╁睍鍚庡彴閫氫俊澶辫触锛?{lastError}`),
+          })
+          return
+        }
+
+        resolve({
+          ...(response ?? {
+            ok: false,
+            error: '鎵╁睍鍚庡彴娌℃湁杩斿洖缁撴灉锛岄€氬父鏄?service worker 鎵ц鏃跺嚭閿欐垨鎵╁睍闇€瑕侀噸鏂板姞杞姐€?,
+          }),
+          error: response?.error ? normalizeRuntimeError(response.error) : response?.error,
+        })
+      })
+    } catch (error) {
+      resolve({
+        ok: false,
+        error: normalizeRuntimeError(error instanceof Error ? error.message : String(error)),
+      })
+    }
+  })
+
+const state: PanelState = {
+  isOpen: false,
+  activeTab: 'today_focus',
+  expandedBundleKey: null,
+  analysisItems: [],
+  syncEngine: null,
+  syncError: '',
+  isSyncing: false,
+  requiresAuth: false,
+  syncStatusMessage: '',
+  syncCooldownUntil: 0,
+  syncedMailCount: 0,
+  clickCounts: {},
+  customSenderEntries: [],
+  customFocusEntries: [],
+  processedMessageIds: [],
+  importantSenderNames: [],
+  notImportantSenderNames: [],
+  mutedSenderNames: [],
+  selectedSenders: [],
+  customSenderValue: '',
+  selectedFocuses: [],
+  customFocusValue: '',
+  analysisHistory: {},
+  needsRerank: false,
+  hiddenMessageIds: [],
+  feedbackHistory: [],
+  currentAccountKey: null,
+  preferencesLoaded: false,
+  removingMessageIds: [],
+  feedbackAcknowledgements: {},
+  priorityPreview: {},
+  priorityAnimations: {},
+  expandedSections: {
+    senders: false,
+    history: false,
+    focus: false,
+  },
+  resummarizingMessageIds: [],
+}
+
+const getSyncCooldownRemainingMs = () => Math.max(0, state.syncCooldownUntil - Date.now())
+
+const getSyncCooldownRemainingSeconds = () => Math.ceil(getSyncCooldownRemainingMs() / 1000)
+
+const isSyncCoolingDown = () => getSyncCooldownRemainingMs() > 0
+
+const getSyncActionLabel = (baseLabel: string) =>
+  isSyncCoolingDown() ? `${baseLabel}锛?{getSyncCooldownRemainingSeconds()}s锛塦 : baseLabel
+
+const scheduleSyncCooldownRender = () => {
+  if (syncCooldownTimer !== null) {
+    window.clearTimeout(syncCooldownTimer)
+    syncCooldownTimer = null
+  }
+
+  const remainingMs = getSyncCooldownRemainingMs()
+  if (!remainingMs) {
+    return
+  }
+
+  syncCooldownTimer = window.setTimeout(() => {
+    syncCooldownTimer = null
+    render()
+    scheduleSyncCooldownRender()
+  }, Math.min(1000, remainingMs))
+}
+
+const startSyncCooldown = () => {
+  state.syncCooldownUntil = Date.now() + SYNC_ACTION_COOLDOWN_MS
+  scheduleSyncCooldownRender()
+}
+
+const tryStartSyncAnalysis = (reason: 'refresh' | 'rerank') => {
+  if (state.isSyncing) {
+    return false
+  }
+
+  if (isSyncCoolingDown()) {
+    state.syncStatusMessage = `鎿嶄綔杩囦簬棰戠箒锛岃 ${getSyncCooldownRemainingSeconds()} 绉掑悗鍐嶈瘯銆俙
+    render()
+    return false
+  }
+
+  startSyncCooldown()
+
+  if (reason === 'rerank') {
+    queueViewportRestore(
+      preferredFollowCardId
+        ? { cardId: preferredFollowCardId, behavior: 'follow' }
+        : { behavior: 'preserve' },
+    )
+  }
+
+  void syncAnalysis(reason)
+  return true
+}
+
+let persistedStore: PersistedStore = {
+  version: STORAGE_VERSION,
+  accounts: {},
+}
+
+let queuedViewportAnchor: ViewportAnchor | null = null
+let preferredFollowCardId: string | null = null
+let pendingViewportFollow:
+  | {
+      cardId: string
+    }
+  | null = null
+
+const normalizeHistoryEntry = (entry: Partial<MessageHistoryEntry>): MessageHistoryEntry | null => {
+  const messageId = entry.messageId?.trim()
+  const senderName = entry.senderName?.trim()
+  const subject = entry.subject?.trim()
+
+  if (!messageId || !senderName || !subject) {
+    return null
+  }
+
+  return {
+    messageId,
+    threadId: entry.threadId?.trim() || messageId,
+    senderName,
+    senderEmail: entry.senderEmail?.trim() || undefined,
+    subject,
+    briefSubject: entry.briefSubject?.trim() || truncateText(cleanSubjectLine(subject), 18) || '鏂伴偖浠?,
+    summary: entry.summary?.trim() || '',
+    aiSummary: entry.aiSummary?.trim() || entry.summary?.trim() || '',
+    aiReason: entry.aiReason?.trim() || '',
+    actionLabel: entry.actionLabel?.trim() || undefined,
+    reasonTags: Array.isArray(entry.reasonTags) ? entry.reasonTags.filter(Boolean) : [],
+    focusAreas: Array.isArray(entry.focusAreas) ? entry.focusAreas.filter(Boolean) : [],
+    aggregationKey: entry.aggregationKey?.trim() || undefined,
+    aggregationLabel: entry.aggregationLabel?.trim() || undefined,
+    priority: entry.priority ?? 'medium',
+    tab: entry.tab ?? 'todo',
+    isHighPriority: Boolean(entry.isHighPriority ?? entry.priority === 'high'),
+    isTodo: Boolean(entry.isTodo ?? entry.tab === 'todo'),
+    isDueSoon: Boolean(entry.isDueSoon ?? entry.tab === 'due_soon'),
+    isIgnorable: Boolean(entry.isIgnorable ?? entry.tab === 'ignorable'),
+    sortScore: typeof entry.sortScore === 'number' ? entry.sortScore : undefined,
+    deadlineLabel: entry.deadlineLabel?.trim() || undefined,
+    openedCount: typeof entry.openedCount === 'number' ? entry.openedCount : 0,
+    processed: Boolean(entry.processed),
+    feedback: entry.feedback,
+    lastAnalyzedAt: entry.lastAnalyzedAt ?? new Date().toISOString(),
+  }
+}
+
+const normalizePersistedState = (value: Partial<PersistedState> | undefined): PersistedState => {
+  const nextState = {
+    ...createEmptyPersistedState(),
+    ...(value ?? {}),
+  }
+
+  const normalizedHistory = Object.fromEntries(
+    Object.values(nextState.analysisHistory ?? {})
+      .map((entry) => normalizeHistoryEntry(entry as Partial<MessageHistoryEntry>))
+      .filter((entry): entry is MessageHistoryEntry => Boolean(entry))
+      .map((entry) => [entry.messageId, entry]),
+  )
+
+  return {
+    ...nextState,
+    analysisHistory: normalizedHistory,
+    hiddenMessageIds: Array.isArray(nextState.hiddenMessageIds) ? nextState.hiddenMessageIds : [],
+    feedbackHistory: Array.isArray(nextState.feedbackHistory) ? nextState.feedbackHistory : [],
+  }
+}
+
+const createEmptyPersistedState = (): PersistedState => ({
+  clickCounts: {},
+  customSenderEntries: [],
+  customFocusEntries: [],
+  processedMessageIds: [],
+  importantSenderNames: [],
+  notImportantSenderNames: [],
+  mutedSenderNames: [],
+  selectedSenders: [],
+  selectedFocuses: [],
+  customSenderValue: '',
+  customFocusValue: '',
+  activeTab: 'today_focus',
+  analysisHistory: {},
+  needsRerank: false,
+  hiddenMessageIds: [],
+  feedbackHistory: [],
+})
+
+const migratePersistedStore = (raw: unknown): PersistedStore => {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      version: STORAGE_VERSION,
+      accounts: {},
+    }
+  }
+
+  const candidate = raw as Partial<PersistedStore & PersistedState>
+
+  if (candidate.accounts && typeof candidate.accounts === 'object') {
+    const nextAccounts = Object.fromEntries(
+      Object.entries(candidate.accounts).map(([accountKey, value]) => [
+        accountKey,
+        normalizePersistedState(value as Partial<PersistedState>),
+      ]),
+    )
+
+    return {
+      version: STORAGE_VERSION,
+      lastAccountKey: candidate.lastAccountKey,
+      accounts: nextAccounts,
+    }
+  }
+
+  return {
+    version: STORAGE_VERSION,
+    lastAccountKey: DEFAULT_ACCOUNT_KEY,
+    accounts: {
+      [DEFAULT_ACCOUNT_KEY]: normalizePersistedState(candidate as Partial<PersistedState>),
+    },
+  }
+}
+
+const getEffectiveAccountKey = () =>
+  state.currentAccountKey ?? persistedStore.lastAccountKey ?? DEFAULT_ACCOUNT_KEY
+
+const getPersistedAccountState = (accountKey = getEffectiveAccountKey()) => {
+  if (!persistedStore.accounts[accountKey]) {
+    persistedStore.accounts[accountKey] = createEmptyPersistedState()
+  }
+
+  return persistedStore.accounts[accountKey]
+}
+
+const buildPersistedState = (): PersistedState => ({
+  clickCounts: state.clickCounts,
+  customSenderEntries: state.customSenderEntries,
+  customFocusEntries: state.customFocusEntries,
+  processedMessageIds: state.processedMessageIds,
+  importantSenderNames: state.importantSenderNames,
+  notImportantSenderNames: state.notImportantSenderNames,
+  mutedSenderNames: state.mutedSenderNames,
+  selectedSenders: state.selectedSenders,
+  selectedFocuses: state.selectedFocuses,
+  customSenderValue: state.customSenderValue,
+  customFocusValue: state.customFocusValue,
+  activeTab: state.activeTab,
+  analysisCache: getPersistedAccountState().analysisCache,
+  analysisHistory: state.analysisHistory,
+  needsRerank: state.needsRerank,
+  hiddenMessageIds: state.hiddenMessageIds,
+  feedbackHistory: state.feedbackHistory,
+})
+
+const applyPersistedAccountState = (persisted: PersistedState) => {
+  state.clickCounts = persisted.clickCounts ?? {}
+  state.customSenderEntries = persisted.customSenderEntries ?? []
+  state.customFocusEntries = persisted.customFocusEntries ?? []
+  state.processedMessageIds = persisted.processedMessageIds ?? []
+  state.importantSenderNames = persisted.importantSenderNames ?? []
+  state.notImportantSenderNames = persisted.notImportantSenderNames ?? []
+  state.mutedSenderNames = persisted.mutedSenderNames ?? []
+  state.selectedSenders = persisted.selectedSenders ?? []
+  state.selectedFocuses = persisted.selectedFocuses ?? []
+  state.customSenderValue = persisted.customSenderValue ?? ''
+  state.customFocusValue = persisted.customFocusValue ?? ''
+  state.activeTab = persisted.activeTab ?? 'today_focus'
+  state.analysisHistory = persisted.analysisHistory ?? {}
+  state.needsRerank = persisted.needsRerank ?? false
+  state.hiddenMessageIds = persisted.hiddenMessageIds ?? []
+  state.feedbackHistory = persisted.feedbackHistory ?? []
+}
+
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+
+const normalize = (value: string) => value.trim().toLowerCase()
+
+const includesKeyword = (text: string, keywords: readonly string[]) => {
+  const haystack = normalize(text)
+  return keywords.some((keyword) => haystack.includes(normalize(keyword)))
+}
+
+const toggleSelection = (values: string[], value: string) =>
+  values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
+
+const getActionLabel = (text: string) => {
+  const haystack = normalize(text)
+
+  if (['confirm', 'confirmation', '纭', 'interview', '闈㈣瘯'].some((term) => haystack.includes(normalize(term)))) {
+    return '闇€纭'
+  }
+
+  if (['reply', 'respond', '鍥炲', '绛斿'].some((term) => haystack.includes(normalize(term)))) {
+    return '寰呭洖澶?
+  }
+
+  if (['submit', 'upload', 'review', '鎻愪氦', '琛ラ綈'].some((term) => haystack.includes(normalize(term)))) {
+    return '寰呮彁浜?
+  }
+
+  if (['register', 'apply', '鎶ュ悕', '鐢宠'].some((term) => haystack.includes(normalize(term)))) {
+    return '寰呮姤鍚?
+  }
+
+  if (['approve', 'approval', '瀹℃壒'].some((term) => haystack.includes(normalize(term)))) {
+    return '寰呭鎵?
+  }
+
+  if (['vote', 'poll', '鎶曠エ'].some((term) => haystack.includes(normalize(term)))) {
+    return '寰呮姇绁?
+  }
+
+  return undefined
+}
+
+const getFocusAreas = (text: string) => {
+  const haystack = normalize(text)
+  const areas: string[] = []
+
+  if (['job', 'career', 'recruit', 'interview', '鎷涜仒', '闈㈣瘯', '姹傝亴'].some((term) => haystack.includes(normalize(term)))) {
+    areas.push('鎷涜仒')
+  }
+
+  if (['project', 'review', 'approval', 'meeting', 'invoice', 'budget', '椤圭洰', '宸ヤ綔', '瀹℃壒'].some((term) =>
+    haystack.includes(normalize(term)),
+  )) {
+    areas.push('宸ヤ綔')
+  }
+
+  if (['school', 'student', 'university', 'campus', '瀛︽牎', '鏍″洯', '璇剧▼', 'lecture'].some((term) =>
+    haystack.includes(normalize(term)),
+  )) {
+    areas.push('瀛︿笟')
+  }
+
+  return areas
+}
+
+const truncateText = (value: string, maxLength: number) =>
+  value.length > maxLength ? `${value.slice(0, maxLength - 1).trim()}鈥 : value
+
+const cleanSubjectLine = (subject: string) =>
+  subject
+    .replace(/^(re|fw|fwd)\s*:\s*/gi, '')
+    .replace(/^\[[^\]]+\]\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const getSenderPreference = (senderName: string) => {
+  if (state.mutedSenderNames.includes(senderName)) {
+    return 'muted'
+  }
+
+  if (state.importantSenderNames.includes(senderName)) {
+    return 'important'
+  }
+
+  if (state.notImportantSenderNames.includes(senderName)) {
+    return 'not_important'
+  }
+
+  return 'default'
+}
+
+const getActionVerb = (actionLabel?: string) => {
+  if (actionLabel === '闇€纭') return '纭'
+  if (actionLabel === '寰呭洖澶?) return '鍥炲'
+  if (actionLabel === '寰呮彁浜?) return '鎻愪氦'
+  if (actionLabel === '寰呮姤鍚?) return '鎶ュ悕'
+  if (actionLabel === '寰呭鎵?) return '瀹℃壒'
+  if (actionLabel === '寰呮姇绁?) return '鎶曠エ'
+  return undefined
+}
+
+const extractDeadlineLabel = (text: string) => {
+  const cleaned = text.replace(/\s+/g, ' ').trim()
+  const patterns = [
+    /((?:浠婂ぉ|浠婃櫄|鏄庡ぉ|鏈懆[涓€浜屼笁鍥涗簲鍏棩澶?)[^锛屻€傦紱\n]{0,10}(?:\d{1,2}:\d{2})?)/,
+    /((?:4|04)\/\d{1,2}(?:\s*\d{1,2}:\d{2})?)/,
+    /((?:\d{1,2}:\d{2})\s*(?:鍓峾鍐厊鎴)?)/,
+    /((?:48h|48 hours|48灏忔椂鍐?)/i,
+    /((?:by|before|due)\s+[A-Za-z0-9/: ]{2,20})/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern)
+    if (match?.[1]) {
+      return truncateText(match[1].trim(), 18)
+    }
+  }
+
+  return undefined
+}
+
+const buildAiInsight = ({
+  senderName,
+  subject,
+  summary,
+  actionLabel,
+  deadlineLabel,
+  focusAreas,
+  priority,
+}: Pick<MailItem, 'senderName' | 'subject' | 'summary' | 'actionLabel' | 'deadlineLabel' | 'focusAreas' | 'priority'>) => {
+  const cleanSubject = cleanSubjectLine(subject)
+  const cleanSummary = truncateText(summary.replace(/^[-鈥揮\s*/, '').trim(), 88)
+  const focusLabel = focusAreas[0]
+  const actionVerb = getActionVerb(actionLabel)
+
+  if (actionLabel === '闇€纭' && focusLabel === '鎷涜仒') {
+    return {
+      briefSubject: '闈㈣瘯纭鎻愰啋',
+      aiSummary: deadlineLabel
+        ? `${deadlineLabel} 鍓嶉渶瑕佺‘璁ら潰璇曞畨鎺掋€?{cleanSummary ? ` ${cleanSummary}` : ''}`
+        : `闇€瑕佺‘璁ら潰璇曞畨鎺掋€?{cleanSummary ? ` ${cleanSummary}` : ''}`,
+      aiReason: cleanSummary || `鍙戜欢浜轰负 ${senderName}銆俙,
+    }
+  }
+
+  if (actionLabel === '寰呮彁浜?) {
+    return {
+      briefSubject: '鏉愭枡鎻愪氦鎻愰啋',
+      aiSummary: deadlineLabel
+        ? `${deadlineLabel} 鍓嶉渶瑕佹彁浜ゆ潗鏂欍€?{cleanSummary ? ` ${cleanSummary}` : ''}`
+        : `杩欏皝閭欢鍦ㄥ偓浣犳彁浜ゆ潗鏂欍€?{cleanSummary ? ` ${cleanSummary}` : ''}`,
+      aiReason: cleanSummary || `鍙戜欢浜轰负 ${senderName}銆俙,
+    }
+  }
+
+  if (actionLabel === '寰呮姤鍚?) {
+    return {
+      briefSubject: '鎶ュ悕鎴鎻愰啋',
+      aiSummary: deadlineLabel
+        ? `${deadlineLabel} 鍓嶉渶瑕佸畬鎴愭姤鍚嶃€?{cleanSummary ? ` ${cleanSummary}` : ''}`
+        : `杩欏皝閭欢鎻愬埌闇€瑕佸敖蹇姤鍚嶃€?{cleanSummary ? ` ${cleanSummary}` : ''}`,
+      aiReason: cleanSummary || `鍙戜欢浜轰负 ${senderName}銆俙,
+    }
+  }
+
+  if (priority === 'low') {
+    return {
+      briefSubject:
+        senderName.toLowerCase().includes('linkedin') || cleanSubject.toLowerCase().includes('job')
+          ? '宀椾綅璁㈤槄鏇存柊'
+          : truncateText(cleanSubject || '璁㈤槄鏇存柊', 18),
+      aiSummary:
+        cleanSummary || '杩欐槸涓€缁勪俊鎭洿鏂版垨璁㈤槄鎺ㄩ€侊紝褰撳墠娌℃湁鏄庣‘寰呭姙銆?,
+      aiReason: cleanSummary || `鏉ユ簮鏄?${senderName}锛屽綋鍓嶆病鏈夋槑纭姩浣滆姹傘€俙,
+    }
+  }
+
+  if (actionLabel && deadlineLabel) {
+    return {
+      briefSubject: truncateText(cleanSubject || `${actionLabel}鎻愰啋`, 18),
+      aiSummary: `${deadlineLabel} 鍓嶉渶瑕?{actionVerb ?? '澶勭悊'}銆?{cleanSummary ? ` ${cleanSummary}` : ''}`,
+      aiReason: cleanSummary || '姝ｆ枃閲屽嚭鐜颁簡鏄庣‘鍔ㄤ綔鍜屾椂闂磋姹傘€?,
+    }
+  }
+
+  if (actionLabel) {
+    return {
+      briefSubject: truncateText(cleanSubject || `${actionLabel}鎻愰啋`, 18),
+      aiSummary: `杩欏皝閭欢闇€瑕佷綘${actionVerb ?? '杩涗竴姝ュ鐞?}銆?{cleanSummary ? ` ${cleanSummary}` : ''}`,
+      aiReason: cleanSummary || `涓婚鑱氱劍鍦?${truncateText(subject, 40)}銆俙,
+    }
+  }
+
+  if (deadlineLabel) {
+    return {
+      briefSubject: truncateText(cleanSubject || '鏃堕棿鎻愰啋', 18),
+      aiSummary: `閲嶇偣鏃堕棿鏄?${deadlineLabel}銆?{cleanSummary ? ` ${cleanSummary}` : '寤鸿浼樺厛纭鏄惁闇€瑕佸鐞嗐€?}`,
+      aiReason: cleanSummary || `涓婚鏄?${truncateText(subject, 40)}銆俙,
+    }
+  }
+
+  if (focusLabel) {
+    return {
+      briefSubject: truncateText(cleanSubject || `${focusLabel}鐩稿叧`, 18),
+      aiSummary: cleanSummary || `${focusLabel}鐩稿叧锛岄渶瑕佸揩閫熷垽鏂槸鍚﹁缁х画澶勭悊銆俙,
+      aiReason: cleanSummary || `涓婚鏄?${truncateText(subject, 40)}銆俙,
+    }
+  }
+
+  return {
+    briefSubject: truncateText(cleanSubject || '鏂伴偖浠?, 18),
+    aiSummary: cleanSummary || '杩欏皝閭欢缂哄皯鏄庣‘鍔ㄤ綔璇嶏紝寤鸿鎸変富棰樺揩閫熷垽鏂€?,
+    aiReason: cleanSummary || `鍙戜欢浜轰负 ${senderName}銆俙,
+  }
+}
+
+const classifyMail = ({
+  text,
+  unread,
+  actionLabel,
+  focusAreas,
+  hasDeadline,
+  senderPreference,
+}: {
+  text: string
+  unread: boolean
+  actionLabel?: string
+  focusAreas: string[]
+  hasDeadline: boolean
+  senderPreference: 'default' | 'important' | 'not_important' | 'muted'
+}) => {
+  if ((includesKeyword(text, LOW_KEYWORDS) || senderPreference === 'muted') && !actionLabel && !hasDeadline) {
+    return {
+      priority: 'low' as const,
+      tab: 'ignorable' as const,
+      isHighPriority: false,
+      isTodo: false,
+      isDueSoon: false,
+      isIgnorable: true,
+    }
+  }
+
+  let score = 0
+
+  if (actionLabel) score += 3
+  if (hasDeadline || includesKeyword(text, DUE_KEYWORDS)) score += 2
+  if (includesKeyword(text, HIGH_KEYWORDS)) score += 2
+  if (focusAreas.length) score += 1
+  if (unread) score += 1
+  if (senderPreference === 'important') score += 3
+  if (senderPreference === 'not_important') score -= 3
+  if (senderPreference === 'muted') score -= 4
+
+  const isDueSoon = hasDeadline || includesKeyword(text, DUE_KEYWORDS)
+  const isHighPriority = score >= 4
+  const isTodo = Boolean(actionLabel) || isDueSoon || score >= 2
+  const priority = isHighPriority ? ('high' as const) : score >= 2 ? ('medium' as const) : ('low' as const)
+  const tab = isDueSoon ? ('due_soon' as const) : isHighPriority ? ('today_focus' as const) : isTodo ? ('todo' as const) : ('ignorable' as const)
+
+  return {
+    priority,
+    tab,
+    isHighPriority: tab !== 'ignorable' && isHighPriority,
+    isTodo: tab !== 'ignorable' && isTodo,
+    isDueSoon: tab !== 'ignorable' && isDueSoon,
+    isIgnorable: tab === 'ignorable',
+  }
+}
+
+const extractText = (element: Element | null | undefined) =>
+  element?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+
+const isNewsletterLike = (text: string) => includesKeyword(text, LOW_KEYWORDS)
+
+const buildMailItemFromRow = (row: HTMLElement, index: number): MailItem | null => {
+  const threadId = row.getAttribute('data-legacy-thread-id') ?? `thread-${index}`
+  const messageId = row.getAttribute('data-legacy-message-id') ?? threadId
+  const senderEl =
+    row.querySelector<HTMLElement>('.yP') ??
+    row.querySelector<HTMLElement>('.yW span[email]') ??
+    row.querySelector<HTMLElement>('.yW')
+  const subjectEl =
+    row.querySelector<HTMLElement>('.bog') ??
+    row.querySelector<HTMLElement>('.y6') ??
+    row.querySelector<HTMLElement>('span[id]')
+  const summaryEl = row.querySelector<HTMLElement>('.y2')
+  const timeEl = row.querySelector<HTMLElement>('.xW span') ?? row.querySelector<HTMLElement>('.xW')
+
+  const senderName =
+    senderEl?.getAttribute('name') ??
+    senderEl?.getAttribute('email') ??
+    extractText(senderEl)
+  const senderEmail = senderEl?.getAttribute('email') ?? undefined
+  const subject = extractText(subjectEl)
+  const summary = extractText(summaryEl)
+  const timeText = timeEl?.getAttribute('title') ?? extractText(timeEl)
+
+  if (!senderName && !subject) {
+    return null
+  }
+
+  const contentText = `${senderName} ${senderEmail ?? ''} ${subject} ${summary}`
+  const unread = row.classList.contains('zE')
+  const actionLabel = getActionLabel(contentText)
+  const focusAreas = getFocusAreas(contentText)
+  const deadlineLabel = extractDeadlineLabel(`${subject} ${summary}`)
+  const senderPreference = getSenderPreference(senderName)
+  const { priority, tab, isHighPriority, isTodo, isDueSoon, isIgnorable } = classifyMail({
+    text: contentText,
+    unread,
+    actionLabel,
+    focusAreas,
+    hasDeadline: Boolean(deadlineLabel),
+    senderPreference,
+  })
+  const reasonTags = Array.from(
+    new Set(
+      [
+        actionLabel,
+        deadlineLabel ? '鏈夋椂闂寸偣' : undefined,
+        ...focusAreas,
+      ].filter(Boolean),
+    ),
+  ).slice(0, 3) as string[]
+  const { briefSubject, aiSummary, aiReason } = buildAiInsight({
+    senderName,
+    subject,
+    summary,
+    actionLabel,
+    deadlineLabel,
+    focusAreas,
+    priority,
+  })
+
+  return {
+    messageId,
+    threadId,
+    senderName,
+    senderEmail,
+    subject: subject || '(鏃犳爣棰橀偖浠?',
+    briefSubject,
+    summary: summary || '褰撳墠閭欢鍒楄〃鏈彁渚涙憳瑕侊紝鍙偣鍑绘煡鐪嬪師閭欢銆?,
+    aiSummary,
+    aiReason,
+    deadlineLabel,
+    timeText: timeText || '鏈€杩?,
+    priority,
+    tab,
+    isHighPriority,
+    isTodo,
+    isDueSoon,
+    isIgnorable,
+    actionLabel,
+    reasonTags,
+    focusAreas,
+    aggregationKey: isNewsletterLike(contentText) ? normalize(senderName) : undefined,
+    sortScore: priority === 'high' ? 80 : priority === 'medium' ? 45 : 10,
+  }
+}
+
+const extractLiveMailItems = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('tr.zA'))
+    .map((row, index) => buildMailItemFromRow(row, index))
+    .filter((item): item is MailItem => Boolean(item))
+
+const getSourceMailItems = () => (state.analysisItems.length ? state.analysisItems : extractLiveMailItems())
+
+const getSelectedSenderHints = () => {
+  const selected = state.selectedSenders.filter((value) => value !== CUSTOM_SENDER)
+  const customValue = state.selectedSenders.includes(CUSTOM_SENDER) ? state.customSenderValue.trim() : ''
+  return Array.from(new Set([...selected, ...(customValue ? [customValue] : [])])).filter(Boolean)
+}
+
+const getSelectedFocusHints = () => {
+  const selected = state.selectedFocuses.filter((value) => value !== CUSTOM_FOCUS)
+  const customValue = state.selectedFocuses.includes(CUSTOM_FOCUS) ? state.customFocusValue.trim() : ''
+  return Array.from(new Set([...selected, ...(customValue ? [customValue] : [])])).filter(Boolean)
+}
+
+const serializeMailItem = (mail: MailItem) => ({
+  messageId: mail.messageId,
+  threadId: mail.threadId,
+  senderName: mail.senderName,
+  senderEmail: mail.senderEmail ?? null,
+  subject: mail.subject,
+  briefSubject: mail.briefSubject,
+  summary: mail.summary,
+  aiSummary: mail.aiSummary,
+  aiReason: mail.aiReason,
+  deadlineLabel: mail.deadlineLabel ?? null,
+  timeText: mail.timeText,
+  priority: mail.priority,
+  tab: mail.tab,
+  isHighPriority: mail.isHighPriority,
+  isTodo: mail.isTodo,
+  isDueSoon: mail.isDueSoon,
+  isIgnorable: mail.isIgnorable,
+  actionLabel: mail.actionLabel ?? null,
+  reasonTags: mail.reasonTags,
+  focusAreas: mail.focusAreas,
+  aggregationKey: mail.aggregationKey ?? null,
+  aggregationLabel: mail.aggregationLabel ?? null,
+  sortScore: mail.sortScore ?? null,
+})
+
+const rerankMailLocally = (mail: MailItem): MailItem => {
+  const selectedSenders = getSelectedSenderHints()
+  const selectedFocuses = getSelectedFocusHints()
+  const haystack = `${mail.senderName} ${mail.senderEmail ?? ''} ${mail.subject} ${mail.summary} ${mail.aiSummary} ${
+    mail.aiReason
+  } ${mail.reasonTags.join(' ')} ${mail.focusAreas.join(' ')} ${mail.deadlineLabel ?? ''} ${mail.actionLabel ?? ''} ${mail.timeText}`
+  const normalizedHaystack = normalize(haystack)
+  const normalizedSender = normalize(`${mail.senderName} ${mail.senderEmail ?? ''}`)
+  const senderProfile = getSenderProfiles().find((profile) => profile.senderName === mail.senderName)
+  const senderPreference = getSenderPreference(mail.senderName)
+  const senderMatched = selectedSenders.some((sender) => {
+    const normalized = normalize(sender)
+    return normalizedSender.includes(normalized)
+  })
+  const focusMatchCount = selectedFocuses.filter((focus) => {
+    const normalized = normalize(focus)
+    return (
+      normalizedHaystack.includes(normalized) ||
+      mail.focusAreas.some((area) => normalize(area).includes(normalized) || normalized.includes(normalize(area)))
+    )
+  }).length
+  const actionLabel = mail.actionLabel ?? getActionLabel(haystack)
+  const hasDeadline = Boolean(mail.deadlineLabel) || includesKeyword(haystack, DUE_KEYWORDS)
+  const lowSignal = includesKeyword(haystack, LOW_KEYWORDS)
+  const isManuallyHidden = state.hiddenMessageIds.includes(mail.messageId)
+
+  if (isManuallyHidden) {
+    return {
+      ...mail,
+      priority: 'low',
+      tab: 'ignorable',
+      isHighPriority: false,
+      isTodo: false,
+      isDueSoon: false,
+      isIgnorable: true,
+      sortScore: 6,
+    }
+  }
+
+  let score = mail.priority === 'high' ? 62 : mail.priority === 'medium' ? 38 : 14
+
+  if (actionLabel) score += 18
+  if (hasDeadline) score += 16
+  if (includesKeyword(haystack, HIGH_KEYWORDS)) score += 12
+  if (senderMatched) score += 34
+  if (focusMatchCount) score += focusMatchCount * 28
+
+  if (senderPreference === 'important') score += 22
+  if (senderPreference === 'not_important') score -= 18
+  if (senderPreference === 'muted') score -= 34
+
+  if (senderProfile) {
+    score += Math.min(12, senderProfile.openedCount * 2)
+    score += senderProfile.importantVotes * 6
+    score -= senderProfile.notImportantVotes * 5
+    score -= senderProfile.mutedVotes * 8
+  }
+
+  let priority: Priority = 'low'
+  let tab: TabKey = 'ignorable'
+  let isHighPriority = false
+  let isTodo = false
+  let isDueSoon = false
+  let isIgnorable = false
+
+  if (lowSignal && !actionLabel && !hasDeadline && !senderMatched && !focusMatchCount) {
+    priority = 'low'
+    tab = 'ignorable'
+    isIgnorable = true
+  } else if (hasDeadline || includesKeyword(haystack, DUE_KEYWORDS)) {
+    priority = score >= 78 ? 'high' : 'medium'
+    tab = 'due_soon'
+    isDueSoon = true
+    isTodo = true
+    isHighPriority = priority === 'high'
+  } else if (score >= 84) {
+    priority = 'high'
+    tab = 'today_focus'
+    isHighPriority = true
+    isTodo = true
+  } else if (score >= 44) {
+    priority = 'medium'
+    tab = 'todo'
+    isTodo = true
+  } else {
+    isIgnorable = true
+  }
+
+  return {
+    ...mail,
+    priority,
+    tab,
+    isHighPriority,
+    isTodo,
+    isDueSoon,
+    isIgnorable,
+    sortScore: score,
+  }
+}
+
+const rerankAnalysisLocally = () => {
+  const generatedAt = new Date().toISOString()
+  const reranked = state.analysisItems
+    .map((mail) => rerankMailLocally(mail))
+    .sort((left, right) => (right.sortScore ?? 0) - (left.sortScore ?? 0))
+
+  state.analysisItems = reranked
+  syncAnalysisHistory(reranked, generatedAt)
+
+  const cache = getPersistedAccountState().analysisCache
+  if (cache) {
+    cache.payload = {
+      ...cache.payload,
+      generatedAt,
+      items: reranked.map((mail) => serializeMailItem(mail)),
+      overview: {
+        highPriorityCount: reranked.filter((mail) => mail.isHighPriority && !mail.isIgnorable).length,
+        todoCount: reranked.filter((mail) => mail.isTodo && !mail.isIgnorable).length,
+        dueSoon48hCount: reranked.filter((mail) => mail.isDueSoon && !mail.isIgnorable).length,
+        ignorableCount: reranked.filter((mail) => mail.isIgnorable).length,
+      },
+    }
+    cache.preferenceSignature = getPreferenceSignature()
+    cache.savedAt = generatedAt
+  }
+
+  state.needsRerank = false
+  state.syncError = ''
+  state.syncStatusMessage = '鍚庣鏆傛椂涓嶅彲杈撅紝宸插厛鎸夋湰鍦板亸濂藉畬鎴愰噸鎺掋€?
+  syncPersistedState()
+}
+
+const getMailListSignature = () =>
+  Array.from(document.querySelectorAll<HTMLElement>('tr.zA'))
+    .slice(0, 80)
+    .map((row, index) => {
+      const messageId = row.getAttribute('data-legacy-message-id') ?? `row-${index}`
+      const unreadFlag = row.classList.contains('zE') ? 'u' : 'r'
+      const subject =
+        extractText(row.querySelector<HTMLElement>('.bog')) ||
+        extractText(row.querySelector<HTMLElement>('.y6'))
+      return `${messageId}:${unreadFlag}:${subject}`
+    })
+    .join('|')
+
+const buildSyncHints = (analysisMode: 'incremental' | 'rerank' = 'incremental'): SyncHints => ({
+  accountKey: state.currentAccountKey ?? undefined,
+  analysisMode,
+  selectedSenders: state.selectedSenders.filter((value) => value !== CUSTOM_SENDER),
+  selectedFocuses: state.selectedFocuses.filter((value) => value !== CUSTOM_FOCUS),
+  customSenderValue: state.selectedSenders.includes(CUSTOM_SENDER) ? state.customSenderValue.trim() : '',
+  customFocusValue: state.selectedFocuses.includes(CUSTOM_FOCUS) ? state.customFocusValue.trim() : '',
+  importantSenderNames: state.importantSenderNames,
+  notImportantSenderNames: state.notImportantSenderNames,
+  mutedSenderNames: state.mutedSenderNames,
+  senderHistory: getSenderHistory(),
+  senderProfiles: getSenderProfiles(),
+  recentHistory: getRecentHistory(),
+  processedMessageIds: state.processedMessageIds,
+})
+
+const replaceMailItem = (nextItem: MailItem) => {
+  state.analysisItems = state.analysisItems
+    .map((item) => (item.messageId === nextItem.messageId ? nextItem : item))
+    .sort((left, right) => (right.sortScore ?? 0) - (left.sortScore ?? 0))
+
+  const cache = getPersistedAccountState().analysisCache
+  if (cache) {
+    cache.payload = {
+      ...cache.payload,
+      items: cache.payload.items
+        .map((item) =>
+          item.messageId === nextItem.messageId
+            ? {
+                ...item,
+                senderName: nextItem.senderName,
+                senderEmail: nextItem.senderEmail ?? null,
+                subject: nextItem.subject,
+                briefSubject: nextItem.briefSubject,
+                summary: nextItem.summary,
+                aiSummary: nextItem.aiSummary,
+                aiReason: nextItem.aiReason,
+                deadlineLabel: nextItem.deadlineLabel ?? null,
+                timeText: nextItem.timeText,
+                priority: nextItem.priority,
+                tab: nextItem.tab,
+                isHighPriority: nextItem.isHighPriority,
+                isTodo: nextItem.isTodo,
+                isDueSoon: nextItem.isDueSoon,
+                isIgnorable: nextItem.isIgnorable,
+                actionLabel: nextItem.actionLabel ?? null,
+                reasonTags: nextItem.reasonTags,
+                focusAreas: nextItem.focusAreas,
+                aggregationKey: nextItem.aggregationKey ?? null,
+                aggregationLabel: nextItem.aggregationLabel ?? null,
+                sortScore: nextItem.sortScore ?? null,
+              }
+            : item,
+        )
+        .sort((left, right) => (right.sortScore ?? 0) - (left.sortScore ?? 0)),
+      overview: getOverviewCounts(),
+    }
+  }
+}
+
+const captureCardRects = (root: HTMLElement) =>
+  new Map(
+    Array.from(root.querySelectorAll<HTMLElement>('[data-card-id]')).map((element) => [
+      element.dataset.cardId ?? '',
+      element.getBoundingClientRect(),
+    ]),
+  )
+
+const findCardById = (root: HTMLElement, cardId: string) =>
+  Array.from(root.querySelectorAll<HTMLElement>('[data-card-id]')).find(
+    (element) => element.dataset.cardId === cardId,
+  )
+
+const queueViewportRestore = (anchor: ViewportAnchor = {}) => {
+  queuedViewportAnchor = {
+    cardId: anchor.cardId,
+    behavior: anchor.behavior ?? 'preserve',
+  }
+}
+
+const captureViewportSnapshot = (root: HTMLElement): ViewportSnapshot | null => {
+  const content = root.querySelector<HTMLElement>('.lma-ext-content')
+  if (!content) {
+    return null
+  }
+
+  const snapshot: ViewportSnapshot = {
+    scrollTop: content.scrollTop,
+    followBehavior: queuedViewportAnchor?.behavior ?? 'preserve',
+  }
+
+  const anchorCardId = queuedViewportAnchor?.cardId
+  if (anchorCardId) {
+    const anchorCard = findCardById(root, anchorCardId)
+    if (anchorCard) {
+      snapshot.anchorCardId = anchorCardId
+      snapshot.anchorViewportOffset =
+        anchorCard.getBoundingClientRect().top - content.getBoundingClientRect().top
+    }
+  }
+
+  return snapshot
+}
+
+const restoreViewportSnapshot = (root: HTMLElement, snapshot: ViewportSnapshot | null) => {
+  const content = root.querySelector<HTMLElement>('.lma-ext-content')
+  if (!content || !snapshot) {
+    queuedViewportAnchor = null
+    pendingViewportFollow = null
+    return
+  }
+
+  content.scrollTop = snapshot.scrollTop
+
+  if (snapshot.anchorCardId && typeof snapshot.anchorViewportOffset === 'number') {
+    const anchorCard = findCardById(root, snapshot.anchorCardId)
+    if (anchorCard) {
+      if (snapshot.followBehavior === 'follow') {
+        pendingViewportFollow = {
+          cardId: snapshot.anchorCardId,
+        }
+      } else {
+        const anchorContentOffset =
+          anchorCard.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop
+        const targetScrollTop = Math.max(0, anchorContentOffset - snapshot.anchorViewportOffset)
+        content.scrollTop = targetScrollTop
+      }
+    }
+  }
+
+  queuedViewportAnchor = null
+}
+
+const runViewportFollow = (root: HTMLElement) => {
+  const content = root.querySelector<HTMLElement>('.lma-ext-content')
+  if (!content || !pendingViewportFollow) {
+    pendingViewportFollow = null
+    return
+  }
+
+  const anchorCard = findCardById(root, pendingViewportFollow.cardId)
+  pendingViewportFollow = null
+
+  if (!anchorCard) {
+    return
+  }
+
+  const contentRect = content.getBoundingClientRect()
+  const cardRect = anchorCard.getBoundingClientRect()
+  const cardContentOffset = cardRect.top - contentRect.top + content.scrollTop
+  const viewportTarget = Math.max(56, Math.min(content.clientHeight * 0.26, 148))
+  const targetScrollTop = Math.max(0, cardContentOffset - viewportTarget)
+
+  if (Math.abs(targetScrollTop - content.scrollTop) < 12) {
+    return
+  }
+
+  globalThis.requestAnimationFrame(() => {
+    content.scrollTo({
+      top: targetScrollTop,
+      behavior: 'smooth',
+    })
+  })
+}
+
+const animateCardReflow = (root: HTMLElement, previousRects: Map<string, DOMRect>) => {
+  for (const card of Array.from(root.querySelectorAll<HTMLElement>('[data-card-id]'))) {
+    const cardId = card.dataset.cardId ?? ''
+    const previous = previousRects.get(cardId)
+
+    if (!previous) {
+      continue
+    }
+
+    const current = card.getBoundingClientRect()
+    const deltaX = previous.left - current.left
+    const deltaY = previous.top - current.top
+
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
+      continue
+    }
+
+    card.animate(
+      [
+        {
+          transform: `translate(${deltaX}px, ${deltaY}px)`,
+          boxShadow: '0 18px 34px rgba(43, 122, 242, 0.12)',
+        },
+        {
+          transform: 'translate(0, 0)',
+          boxShadow: '0 0 0 rgba(43, 122, 242, 0)',
+        },
+      ],
+      {
+        duration: 420,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      },
+    )
+  }
+}
+
+const bindLiquidGlass = (root: HTMLElement) => {
+  const buttons = Array.from(root.querySelectorAll<HTMLElement>('button:not(.lma-ext-overview-card)'))
+
+  buttons.forEach((button) => {
+    button.classList.add('lma-ext-liquid-target')
+    button.addEventListener('pointerenter', () => {
+      button.classList.add('is-liquid-hovered')
+    })
+    button.addEventListener('pointerleave', () => {
+      button.classList.remove('is-liquid-hovered')
+    })
+    button.addEventListener('pointermove', (event) => {
+      const rect = button.getBoundingClientRect()
+      button.style.setProperty('--glass-x', `${event.clientX - rect.left}px`)
+      button.style.setProperty('--glass-y', `${event.clientY - rect.top}px`)
+    })
+  })
+
+  const groups = Array.from(
+    root.querySelectorAll<HTMLElement>(
+      '.lma-ext-actions, .lma-ext-feedback-row, .lma-ext-filter-choice-row, .lma-ext-filter-input-row',
+    ),
+  )
+
+  groups.forEach((group) => {
+    const targets = Array.from(group.querySelectorAll<HTMLElement>('button:not(.lma-ext-overview-card)'))
+    if (!targets.length) {
+      return
+    }
+
+    group.classList.add('lma-ext-liquid-group')
+
+    const indicator = document.createElement('span')
+    indicator.className = 'lma-ext-liquid-indicator'
+    group.appendChild(indicator)
+
+    const moveIndicator = (target: HTMLElement) => {
+      const groupRect = group.getBoundingClientRect()
+      const rect = target.getBoundingClientRect()
+
+      indicator.style.width = `${rect.width}px`
+      indicator.style.height = `${rect.height}px`
+      indicator.style.transform = `translate(${rect.left - groupRect.left}px, ${rect.top - groupRect.top}px)`
+      indicator.style.borderRadius = getComputedStyle(target).borderRadius
+      indicator.style.opacity = '1'
+    }
+
+    const activateTarget = (target: HTMLElement, event?: PointerEvent) => {
+      targets.forEach((item) => item.classList.toggle('is-liquid-hovered', item === target))
+
+      if (event) {
+        const rect = target.getBoundingClientRect()
+        const x = event.clientX - rect.left
+        const y = event.clientY - rect.top
+        target.style.setProperty('--glass-x', `${x}px`)
+        target.style.setProperty('--glass-y', `${y}px`)
+        indicator.style.setProperty('--glass-x', `${x}px`)
+        indicator.style.setProperty('--glass-y', `${y}px`)
+      } else {
+        indicator.style.setProperty('--glass-x', `${target.clientWidth / 2}px`)
+        indicator.style.setProperty('--glass-y', `${target.clientHeight / 2}px`)
+      }
+
+      moveIndicator(target)
+    }
+
+    targets.forEach((target) => {
+      target.addEventListener('pointerenter', (event) => activateTarget(target, event))
+      target.addEventListener('pointermove', (event) => activateTarget(target, event))
+    })
+
+    group.addEventListener('pointerleave', () => {
+      indicator.style.opacity = '0'
+      targets.forEach((target) => target.classList.remove('is-liquid-hovered'))
+    })
+  })
+}
+
+const getDisplayedPriority = (mail: MailItem) => state.priorityPreview[mail.messageId] ?? mail.priority
+
+const promotePriority = (priority: Priority): Priority => {
+  if (priority === 'low') return 'medium'
+  return 'high'
+}
+
+const queuePriorityUpgrade = (mail: MailItem) => {
+  const from = getDisplayedPriority(mail)
+  const to = promotePriority(from)
+
+  if (from === to) {
+    return
+  }
+
+  state.priorityPreview = {
+    ...state.priorityPreview,
+    [mail.messageId]: to,
+  }
+  state.priorityAnimations = {
+    ...state.priorityAnimations,
+    [mail.messageId]: { from, to },
+  }
+
+  globalThis.setTimeout(() => {
+    const nextAnimations = { ...state.priorityAnimations }
+    delete nextAnimations[mail.messageId]
+    state.priorityAnimations = nextAnimations
+    render()
+  }, 360)
+}
+
+const renderPriorityBadge = (mail: MailItem) => {
+  const animation = state.priorityAnimations[mail.messageId]
+
+  if (animation) {
+    return `
+      <span class="lma-ext-priority-stack">
+        <span class="lma-ext-priority ${animation.from} is-exit">${priorityGlyph(animation.from)}</span>
+        <span class="lma-ext-priority ${animation.to} is-enter">${priorityGlyph(animation.to)}</span>
+      </span>
+    `
+  }
+
+  const priority = getDisplayedPriority(mail)
+  return `<span class="lma-ext-priority ${priority}">${priorityGlyph(priority)}</span>`
+}
+
+const applySyncPayload = (payload: SyncPayload) => {
+  state.analysisItems = payload.items.map((item) => ({
+    messageId: item.messageId,
+    threadId: item.threadId ?? item.messageId,
+    senderName: item.senderName,
+    senderEmail: item.senderEmail ?? undefined,
+    subject: item.subject,
+    briefSubject: item.briefSubject?.trim() || truncateText(cleanSubjectLine(item.subject), 18) || '鏂伴偖浠?,
+    summary: item.summary,
+    aiSummary: item.aiSummary,
+    aiReason: item.aiReason ?? '',
+    deadlineLabel: item.deadlineLabel ?? undefined,
+    timeText: item.timeText ?? '鏈€杩?,
+    priority: item.priority,
+    tab: item.tab,
+    isHighPriority: Boolean(item.isHighPriority ?? item.priority === 'high'),
+    isTodo: Boolean(item.isTodo ?? item.tab === 'todo'),
+    isDueSoon: Boolean(item.isDueSoon ?? item.tab === 'due_soon'),
+    isIgnorable: Boolean(item.isIgnorable ?? item.tab === 'ignorable'),
+    actionLabel: item.actionLabel ?? undefined,
+    reasonTags: item.reasonTags,
+    focusAreas: item.focusAreas,
+    aggregationKey: item.aggregationKey ?? undefined,
+    aggregationLabel: item.aggregationLabel ?? undefined,
+    sortScore: item.sortScore ?? undefined,
+  }))
+  state.syncEngine = payload.engine
+  state.syncedMailCount = payload.items.length
+}
+
+const ensureAccountContext = async () => {
+  const response = await sendRuntimeMessage({ type: 'LMA_GET_GMAIL_AUTH_STATE' })
+
+  if (response.accountKey) {
+    const accountChanged = state.currentAccountKey !== null && state.currentAccountKey !== response.accountKey
+    if (accountChanged) {
+      state.analysisItems = []
+      state.syncEngine = null
+      state.syncedMailCount = 0
+    }
+    state.currentAccountKey = response.accountKey
+    persistedStore.lastAccountKey = response.accountKey
+    applyPersistedAccountState(getPersistedAccountState(response.accountKey))
+    applyCachedAnalysisIfFresh()
+  }
+
+  if (!response.ok && response.requiresAuth) {
+    state.requiresAuth = !state.analysisItems.length
+  }
+
+  return response
+}
+
+const openPanel = async () => {
+  state.isOpen = true
+  render()
+
+  if (!state.preferencesLoaded) {
+    return
+  }
+
+  await ensureAccountContext()
+
+  if (applyCachedAnalysisIfFresh()) {
+    render()
+    return
+  }
+
+  if (state.analysisItems.length && state.syncEngine && getMailListSignature() === getPersistedAccountState().analysisCache?.mailSignature) {
+    render()
+    return
+  }
+
+  await syncAnalysis('open')
+}
+
+const syncAnalysis = async (reason: 'open' | 'refresh' | 'rerank' = 'refresh') => {
+  state.isSyncing = true
+  state.syncStatusMessage =
+    reason === 'rerank' ? '姝ｅ湪鎸夋渶鏂板亸濂介噸鏂版帓搴忛偖浠垛€? : '姝ｅ湪鍚屾骞跺垎鏋?Gmail 閭欢鈥?
+  queueViewportRestore({ behavior: 'preserve' })
+  render()
+
+  const response = await sendRuntimeMessage({
+    type: 'LMA_SYNC_GMAIL_ANALYSIS',
+    hints: buildSyncHints(reason === 'rerank' ? 'rerank' : 'incremental'),
+  })
+
+  state.isSyncing = false
+  state.syncError = response.error ?? ''
+  if (response.accountKey) {
+    const accountChanged = state.currentAccountKey !== null && state.currentAccountKey !== response.accountKey
+    if (accountChanged) {
+      state.analysisItems = []
+      state.syncEngine = null
+      state.syncedMailCount = 0
+    }
+    state.currentAccountKey = response.accountKey
+    persistedStore.lastAccountKey = response.accountKey
+    applyPersistedAccountState(getPersistedAccountState(response.accountKey))
+  }
+  state.requiresAuth = Boolean(response.requiresAuth && !state.analysisItems.length)
+  state.syncStatusMessage = response.message ?? ''
+
+  if (response.ok && response.payload) {
+    applySyncPayload(response.payload)
+    if (state.hiddenMessageIds.length) {
+      state.analysisItems = state.analysisItems
+        .map((mail) => rerankMailLocally(mail))
+        .sort((left, right) => (right.sortScore ?? 0) - (left.sortScore ?? 0))
+    }
+    syncAnalysisHistory(state.analysisItems, response.payload.generatedAt)
+    getPersistedAccountState().analysisCache = {
+      payload: {
+        ...response.payload,
+        items: state.analysisItems.map((mail) => serializeMailItem(mail)),
+        overview: getOverviewCounts(),
+      },
+      mailSignature: getMailListSignature(),
+      preferenceSignature: getPreferenceSignature(),
+      savedAt: new Date().toISOString(),
+    }
+    if (reason === 'rerank') {
+      state.needsRerank = false
+    }
+    syncPersistedState()
+  }
+
+  if (!response.ok && reason === 'rerank' && state.analysisItems.length) {
+    rerankAnalysisLocally()
+  }
+
+  queueViewportRestore(
+    reason === 'rerank' && preferredFollowCardId
+      ? { cardId: preferredFollowCardId, behavior: 'follow' }
+      : { behavior: 'preserve' },
+  )
+  render()
+}
+
+const getAllSenderOptions = () => {
+  const counts = new Map<string, number>()
+  const history = getSenderHistory()
+
+  getSourceMailItems().forEach((mail) => {
+    counts.set(mail.senderName, (counts.get(mail.senderName) ?? 0) + 1)
+  })
+
+  history.forEach((entry) => {
+    counts.set(entry.senderName, Math.max(counts.get(entry.senderName) ?? 0, entry.count))
+  })
+
+  const topSenders = Array.from(counts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([senderName, count]) => ({
+      value: senderName,
+      label: `@${senderName}`,
+      count,
+    }))
+
+  const customEntries = state.customSenderEntries.map((entry) => ({
+    value: entry,
+    label: entry,
+    count: 0,
+  }))
+
+  return [...topSenders, ...customEntries].filter(
+    (option, index, list) => list.findIndex((item) => item.value === option.value) === index,
+  )
+}
+
+const getVisibleMailItems = () => {
+  const baseScore = (mail: MailItem) => {
+    if (typeof mail.sortScore === 'number') {
+      return mail.sortScore
+    }
+
+    if (mail.priority === 'high') {
+      return 80
+    }
+
+    if (mail.priority === 'medium') {
+      return 45
+    }
+
+    return 10
+  }
+
+  return getSourceMailItems()
+    .filter((mail) => !state.processedMessageIds.includes(mail.messageId))
+    .map((mail, index) => ({
+      mail,
+      rank: baseScore(mail),
+      index,
+    }))
+    .sort((left, right) => right.rank - left.rank || left.index - right.index)
+    .map((entry) => entry.mail)
+}
+
+const getSenderHistory = () =>
+  Object.entries(state.clickCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([senderName, count]) => ({ senderName, count }))
+
+const groupEntries = (mails: MailItem[]): VisibleEntry[] => {
+  const grouped = new Map<string, MailItem[]>()
+  const entries: VisibleEntry[] = []
+  const visited = new Set<string>()
+
+  mails.forEach((mail) => {
+    if (!mail.aggregationKey) {
+      entries.push({ kind: 'single', item: mail })
+      return
+    }
+
+    const existing = grouped.get(mail.aggregationKey) ?? []
+    existing.push(mail)
+    grouped.set(mail.aggregationKey, existing)
+  })
+
+  mails.forEach((mail) => {
+    if (!mail.aggregationKey || visited.has(mail.aggregationKey)) {
+      return
+    }
+
+    visited.add(mail.aggregationKey)
+    const items = grouped.get(mail.aggregationKey) ?? [mail]
+    entries.push(items.length > 1 ? { kind: 'bundle', key: mail.aggregationKey, items } : { kind: 'single', item: mail })
+  })
+
+  return entries
+}
+
+const getSectionedEntries = () => {
+  const mails = getVisibleMailItems()
+  const current =
+    state.activeTab === 'today_focus'
+      ? mails.filter((mail) => mail.isHighPriority && !mail.isIgnorable)
+      : state.activeTab === 'todo'
+        ? mails.filter((mail) => mail.isTodo && !mail.isIgnorable)
+        : state.activeTab === 'due_soon'
+          ? mails.filter((mail) => mail.isDueSoon && !mail.isIgnorable)
+          : mails.filter((mail) => mail.isIgnorable)
+
+  if (state.activeTab === 'today_focus') {
+    return [
+      { title: '蹇呴』鍏堝鐞?, entries: groupEntries(current.filter((mail) => mail.priority === 'high')) },
+      { title: '鍙互绋嶅悗璺熻繘', entries: groupEntries(current.filter((mail) => mail.priority !== 'high')) },
+    ]
+  }
+
+  if (state.activeTab === 'due_soon') {
+    return [
+      {
+        title: '浠婂ぉ鍐呭埌鏈?,
+        entries: groupEntries(
+          current.filter((mail) => includesKeyword(`${mail.subject} ${mail.summary} ${mail.timeText}`, ['today', 'tonight', '浠婂ぉ', '浠婃櫄'])),
+        ),
+      },
+      {
+        title: '48 灏忔椂鍐呭埌鏈?,
+        entries: groupEntries(
+          current.filter((mail) =>
+            includesKeyword(`${mail.subject} ${mail.summary} ${mail.timeText}`, ['48h', '48 hours', 'tomorrow', '鏄庡ぉ']),
+          ),
+        ),
+      },
+      {
+        title: '杩戞湡鍏虫敞',
+        entries: groupEntries(
+          current.filter(
+            (mail) =>
+              !includesKeyword(`${mail.subject} ${mail.summary} ${mail.timeText}`, ['today', 'tonight', '浠婂ぉ', '浠婃櫄', '48h', '48 hours', 'tomorrow', '鏄庡ぉ']),
+          ),
+        ),
+      },
+    ]
+  }
+
+  return [{ title: TAB_LABELS[state.activeTab], entries: groupEntries(current) }]
+}
+
+const getOverviewCounts = () => {
+  const mails = getVisibleMailItems()
+  return {
+    highPriorityCount: mails.filter((mail) => mail.isHighPriority && !mail.isIgnorable).length,
+    todoCount: mails.filter((mail) => mail.isTodo && !mail.isIgnorable).length,
+    dueSoon48hCount: mails.filter((mail) => mail.isDueSoon && !mail.isIgnorable).length,
+    ignorableCount: mails.filter((mail) => mail.isIgnorable).length,
+  }
+}
+
+const getPreferenceSignature = () =>
+  JSON.stringify({
+    selectedSenders: [...state.selectedSenders].sort(),
+    selectedFocuses: [...state.selectedFocuses].sort(),
+    customSenderEntries: [...state.customSenderEntries].sort(),
+    customFocusEntries: [...state.customFocusEntries].sort(),
+    importantSenderNames: [...state.importantSenderNames].sort(),
+    notImportantSenderNames: [...state.notImportantSenderNames].sort(),
+    mutedSenderNames: [...state.mutedSenderNames].sort(),
+  })
+
+const getSenderProfiles = (): SenderProfile[] => {
+  const profiles = new Map<string, SenderProfile>()
+
+  const ensureProfile = (senderName: string) => {
+    const key = senderName.trim()
+    const existing = profiles.get(key)
+    if (existing) {
+      return existing
+    }
+
+    const profile: SenderProfile = {
+      senderName: key,
+      openedCount: 0,
+      processedCount: 0,
+      importantVotes: 0,
+      notImportantVotes: 0,
+      mutedVotes: 0,
+    }
+    profiles.set(key, profile)
+    return profile
+  }
+
+  Object.entries(state.clickCounts).forEach(([senderName, count]) => {
+    ensureProfile(senderName).openedCount = count
+  })
+
+  Object.values(state.analysisHistory).forEach((entry) => {
+    const profile = ensureProfile(entry.senderName)
+    profile.lastPriority = entry.priority
+    profile.lastTab = entry.tab
+    if (entry.processed) {
+      profile.processedCount += 1
+    }
+    profile.openedCount = Math.max(profile.openedCount, entry.openedCount)
+  })
+
+  state.feedbackHistory.forEach((entry) => {
+    const profile = ensureProfile(entry.senderName)
+    if (entry.preference === 'important') {
+      profile.importantVotes += 1
+    }
+    if (entry.preference === 'not_important') {
+      profile.notImportantVotes += 1
+    }
+    if (entry.preference === 'muted') {
+      profile.mutedVotes += 1
+    }
+  })
+
+  return Array.from(profiles.values())
+    .sort(
+      (left, right) =>
+        right.importantVotes - left.importantVotes ||
+        right.openedCount - left.openedCount ||
+        right.processedCount - left.processedCount,
+    )
+    .slice(0, 30)
+}
+
+const getRecentHistory = () =>
+  Object.values(state.analysisHistory)
+    .sort(
+      (left, right) =>
+        new Date(right.lastAnalyzedAt).getTime() - new Date(left.lastAnalyzedAt).getTime(),
+    )
+    .slice(0, 1000)
+
+const syncAnalysisHistory = (items: MailItem[], generatedAt: string) => {
+  const nextHistory = { ...state.analysisHistory }
+
+  items.forEach((item) => {
+    const previous = nextHistory[item.messageId]
+
+    nextHistory[item.messageId] = {
+      messageId: item.messageId,
+      threadId: item.threadId,
+      senderName: item.senderName,
+      senderEmail: item.senderEmail,
+      subject: item.subject,
+      briefSubject: item.briefSubject,
+      summary: item.summary,
+      aiSummary: item.aiSummary,
+      aiReason: item.aiReason,
+      actionLabel: item.actionLabel,
+      reasonTags: item.reasonTags,
+      focusAreas: item.focusAreas,
+      aggregationKey: item.aggregationKey,
+      aggregationLabel: item.aggregationLabel,
+      priority: item.priority,
+      tab: item.tab,
+      isHighPriority: item.isHighPriority,
+      isTodo: item.isTodo,
+      isDueSoon: item.isDueSoon,
+      isIgnorable: item.isIgnorable,
+      sortScore: item.sortScore,
+      deadlineLabel: item.deadlineLabel,
+      openedCount: previous?.openedCount ?? state.clickCounts[item.senderName] ?? 0,
+      processed: previous?.processed ?? state.processedMessageIds.includes(item.messageId),
+      feedback: previous?.feedback,
+      lastAnalyzedAt: generatedAt,
+    }
+  })
+
+  const trimmedEntries = Object.values(nextHistory)
+    .sort(
+      (left, right) =>
+        new Date(right.lastAnalyzedAt).getTime() - new Date(left.lastAnalyzedAt).getTime(),
+    )
+    .slice(0, 1000)
+
+  state.analysisHistory = Object.fromEntries(
+    trimmedEntries.map((entry) => [entry.messageId, entry]),
+  )
+}
+
+const applyCachedAnalysisIfFresh = () => {
+  const persisted = getPersistedAccountState()
+  const cache = persisted.analysisCache
+
+  if (!cache) {
+    return false
+  }
+
+  if (cache.mailSignature !== getMailListSignature()) {
+    return false
+  }
+
+  applySyncPayload(cache.payload)
+  if (state.hiddenMessageIds.length) {
+    state.analysisItems = state.analysisItems
+      .map((mail) => rerankMailLocally(mail))
+      .sort((left, right) => (right.sortScore ?? 0) - (left.sortScore ?? 0))
+  }
+  syncAnalysisHistory(state.analysisItems, cache.payload.generatedAt)
+  state.syncError = ''
+  state.requiresAuth = false
+  state.syncStatusMessage = state.needsRerank ? '宸插姞杞藉巻鍙插垎鏋愮粨鏋滐紝鍙偣鍑婚噸鏂板垎鏋愭洿鏂版帓搴? : '宸插姞杞戒笂娆″垎鏋愮粨鏋?
+  return true
+}
+
+const markNeedsRerank = () => {
+  state.needsRerank = true
+  syncPersistedState()
+}
+
+const storageSet = (value: PersistedStore) => {
+  chromeApi?.storage?.local?.set?.({ [STORAGE_KEY]: value })
+}
+
+const syncPersistedState = () => {
+  const accountKey = getEffectiveAccountKey()
+  persistedStore.lastAccountKey = accountKey
+  persistedStore.accounts[accountKey] = buildPersistedState()
+  storageSet(persistedStore)
+}
+
+const loadPersistedState = () => {
+  chromeApi?.storage?.local?.get?.(STORAGE_KEY, (items) => {
+    persistedStore = migratePersistedStore(items[STORAGE_KEY])
+    state.currentAccountKey = persistedStore.lastAccountKey ?? DEFAULT_ACCOUNT_KEY
+    applyPersistedAccountState(getPersistedAccountState())
+    state.preferencesLoaded = true
+    applyCachedAnalysisIfFresh()
+    render()
+    if (state.isOpen && !state.analysisItems.length) {
+      void openPanel()
+    }
+  })
+}
+
+const applySenderFeedback = (
+  senderName: string,
+  preference: 'important' | 'not_important' | 'muted',
+) => {
+  state.importantSenderNames = state.importantSenderNames.filter((item) => item !== senderName)
+  state.notImportantSenderNames = state.notImportantSenderNames.filter((item) => item !== senderName)
+  state.mutedSenderNames = state.mutedSenderNames.filter((item) => item !== senderName)
+
+  if (preference === 'important') {
+    state.importantSenderNames = [...state.importantSenderNames, senderName]
+  }
+
+  if (preference === 'not_important') {
+    state.notImportantSenderNames = [...state.notImportantSenderNames, senderName]
+  }
+
+  if (preference === 'muted') {
+    state.mutedSenderNames = [...state.mutedSenderNames, senderName]
+  }
+
+  state.feedbackHistory = [
+    {
+      senderName,
+      preference,
+      updatedAt: new Date().toISOString(),
+    },
+    ...state.feedbackHistory.filter((entry) => entry.senderName !== senderName),
+  ].slice(0, 200)
+
+  Object.values(state.analysisHistory).forEach((entry) => {
+    if (entry.senderName === senderName) {
+      state.analysisHistory[entry.messageId] = {
+        ...entry,
+        feedback: preference,
+      }
+    }
+  })
+
+  syncPersistedState()
+}
+
+const setFeedbackAcknowledgement = (
+  messageId: string,
+  acknowledgement: {
+    type: 'important' | 'not_important' | 'less' | 'hide'
+    message: string
+    pendingHideUntil?: number
+  },
+) => {
+  state.feedbackAcknowledgements = {
+    ...state.feedbackAcknowledgements,
+    [messageId]: acknowledgement,
+  }
+}
+
+const clearFeedbackAcknowledgement = (messageId: string) => {
+  const nextAcknowledgements = { ...state.feedbackAcknowledgements }
+  delete nextAcknowledgements[messageId]
+  state.feedbackAcknowledgements = nextAcknowledgements
+}
+
+const moveMailToIgnorable = (messageId: string) => {
+  state.hiddenMessageIds = Array.from(new Set([...state.hiddenMessageIds, messageId]))
+  state.analysisItems = state.analysisItems.map((mail) =>
+    mail.messageId === messageId
+      ? {
+          ...mail,
+          priority: 'low',
+          tab: 'ignorable',
+          isHighPriority: false,
+          isTodo: false,
+          isDueSoon: false,
+          isIgnorable: true,
+          sortScore: Math.min(mail.sortScore ?? 10, 8),
+        }
+      : mail,
+  )
+  rerankAnalysisLocally()
+}
+
+const applyFeedbackAndRerank = (
+  senderName: string,
+  messageId: string | undefined,
+  preference: 'important' | 'not_important' | 'muted',
+  acknowledgementType: 'important' | 'not_important' | 'less',
+) => {
+  applySenderFeedback(senderName, preference)
+  markNeedsRerank()
+  rerankAnalysisLocally()
+
+  if (!messageId) {
+    return
+  }
+
+  setFeedbackAcknowledgement(messageId, {
+    type: acknowledgementType,
+    message: '鍙嶉宸茶褰?,
+  })
+}
+
+const scheduleHideToIgnorable = (messageId: string) => {
+  const pendingHideUntil = Date.now() + 3000
+  setFeedbackAcknowledgement(messageId, {
+    type: 'hide',
+    message: '鍙嶉宸茶褰曪紝閭欢灏嗙Щ鍏ュ彲蹇界暐',
+    pendingHideUntil,
+  })
+  render()
+
+  globalThis.setTimeout(() => {
+    const current = state.feedbackAcknowledgements[messageId]
+    if (!current || current.pendingHideUntil !== pendingHideUntil) {
+      return
+    }
+
+    state.removingMessageIds = Array.from(new Set([...state.removingMessageIds, messageId]))
+    render()
+
+    globalThis.setTimeout(() => {
+      clearFeedbackAcknowledgement(messageId)
+      state.removingMessageIds = state.removingMessageIds.filter((id) => id !== messageId)
+      moveMailToIgnorable(messageId)
+      render()
+    }, 520)
+  }, 3000)
+}
+
+const openOriginalMail = (messageId: string, threadId: string, senderName?: string, subject?: string) => {
+  const allRows = Array.from(document.querySelectorAll<HTMLElement>('tr.zA'))
+
+  const row =
+    document.querySelector<HTMLElement>(`tr.zA[data-legacy-message-id="${messageId}"]`) ??
+    document.querySelector<HTMLElement>(`tr.zA[data-legacy-thread-id="${threadId}"]`) ??
+    allRows.find((candidate) => {
+      const candidateSender = normalize(
+        extractText(candidate.querySelector<HTMLElement>('.yP')) ||
+          extractText(candidate.querySelector<HTMLElement>('.yW')),
+      )
+      const candidateSubject = normalize(
+        extractText(candidate.querySelector<HTMLElement>('.bog')) ||
+          extractText(candidate.querySelector<HTMLElement>('.y6')),
+      )
+
+      return (
+        Boolean(senderName && candidateSender.includes(normalize(senderName))) &&
+        Boolean(subject && candidateSubject.includes(normalize(subject)))
+      )
+    })
+
+  const gmailThreadUrl = `${window.location.origin}${window.location.pathname}#inbox/${encodeURIComponent(threadId)}`
+
+  if (!row) {
+    window.location.assign(gmailThreadUrl)
+    return true
+  }
+
+  const anchor = row.querySelector<HTMLAnchorElement>('a[href*="#"]')
+  const href = anchor?.href?.trim()
+
+  if (href) {
+    window.location.assign(href)
+    return true
+  }
+
+  const clickable =
+    row.querySelector<HTMLElement>('td[role="gridcell"] div[role="link"]') ??
+    row.querySelector<HTMLElement>('div[role="link"]') ??
+    row.querySelector<HTMLElement>('td[role="gridcell"]') ??
+    row
+
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+  clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+  clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+  clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+
+  return true
+}
+
+const bindContentScrollFade = (root: HTMLElement) => {
+  const shell = root.querySelector<HTMLElement>('.lma-ext-content-shell')
+  const content = root.querySelector<HTMLElement>('.lma-ext-content')
+
+  if (!shell || !content) {
+    return
+  }
+
+  const updateFade = () => {
+    shell.classList.toggle('is-scrolled', content.scrollTop > 6)
+  }
+
+  updateFade()
+  content.addEventListener('scroll', updateFade, { passive: true })
+}
+
+const priorityGlyph = (priority: Priority) => {
+  if (priority === 'high') return '鉁?
+  if (priority === 'medium') return '鈥?
+  return '鈼?
+}
+
+const renderFeedbackRow = (senderName: string, messageId?: string) => {
+  const acknowledgement = messageId ? state.feedbackAcknowledgements[messageId] : undefined
+  const isImportant = state.importantSenderNames.includes(senderName)
+  const isNotImportant = state.notImportantSenderNames.includes(senderName)
+  const isMuted = state.mutedSenderNames.includes(senderName)
+  const messageAttr = messageId ? ` data-message-id="${messageId}"` : ''
+  const acknowledgementText =
+    acknowledgement?.type === 'hide'
+      ? '\u53cd\u9988\u5df2\u8bb0\u5f55\uff0c\u90ae\u4ef6\u5c06\u79fb\u5165\u53ef\u5ffd\u7565'
+      : '\u53cd\u9988\u5df2\u8bb0\u5f55'
+
+  if (acknowledgement) {
+    return `
+      <div class="lma-ext-feedback-row is-confirmed">
+        <span class="lma-ext-feedback-confirmation">${escapeHtml(acknowledgementText)}</span>
+      </div>
+    `
+  }
+
+  return `
+    <div class="lma-ext-feedback-row">
+      <span class="lma-ext-feedback-label">鍙嶉</span>
+      <button class="lma-ext-feedback-chip ${isImportant ? 'is-active' : ''}" data-action="feedback-important"${messageAttr} data-sender-name="${escapeHtml(senderName)}" type="button">鏇撮噸瑕?/button>
+      <button class="lma-ext-feedback-chip ${isNotImportant ? 'is-active' : ''}" data-action="feedback-not-important"${messageAttr} data-sender-name="${escapeHtml(senderName)}" type="button">涓嶉噸瑕?/button>
+      <button class="lma-ext-feedback-chip ${isMuted ? 'is-active' : ''}" data-action="feedback-less"${messageAttr} data-sender-name="${escapeHtml(senderName)}" type="button">灏戞彁閱?/button>
+      <button class="lma-ext-feedback-chip" data-action="feedback-hide"${messageAttr} data-sender-name="${escapeHtml(senderName)}" type="button">娑撳秴鍟€閺勫墽銇?/button>
+    </div>
+  `
+}
+
+const renderSyncBanner = () => {
+  const syncActionDisabled = state.isSyncing || isSyncCoolingDown()
+  const refreshActionLabel = getSyncActionLabel('????')
+  const retryActionLabel = getSyncActionLabel('??')
+  const laterRetryActionLabel = getSyncActionLabel('????')
+
+  if (state.requiresAuth) {
+    return `
+      <section class="lma-ext-sync-banner auth">
+        <strong>鍏堣繛鎺?Gmail</strong>
+        <p>瑕佷娇鐢ㄧ湡瀹?Gmail 閭欢鍜?LLM 鍒嗘瀽锛岄渶瑕佸厛瀹屾垚 Gmail OAuth 鎺堟潈銆?/p>
+        ${state.syncError ? `<p class="lma-ext-sync-banner-detail">${escapeHtml(normalizeRuntimeError(state.syncError))}</p>` : ''}
+        <button class="lma-ext-button primary" data-action="auth-gmail" type="button">${state.syncError ? '閲嶆柊杩炴帴 Gmail' : '杩炴帴 Gmail'}</button>
+      </section>
+    `
+  }
+
+  if (state.syncEngine === 'rules' && !state.isSyncing && !state.syncError) {
+    return `
+      <section class="lma-ext-sync-banner info">
+        <strong>褰撳墠浠嶅湪浣跨敤瑙勫垯寮曟搸</strong>
+        <p>濡傛灉浣犲笇鏈涘緱鍒扮湡瀹?LLM 鐨勬鎷拰鎺掑簭锛岃鍏堝惎鍔?FastAPI 鍚庣锛屽苟鍦?\`.env\` 涓厤缃?\`OPENAI_API_KEY\`銆?/p>
+        <button class="lma-ext-button secondary" data-action="refresh-sync" type="button" ${syncActionDisabled ? 'disabled' : ''}>${escapeHtml(refreshActionLabel)}</button>
+      </section>
+    `
+  }
+
+  if (state.syncStatusMessage.includes('鍚庣鏆傛椂涓嶅彲杈撅紝宸插厛鎸夋湰鍦板亸濂藉畬鎴愰噸鎺?)) {
+    return `
+      <section class="lma-ext-sync-banner info">
+        <strong>宸插厛瀹屾垚鏈湴閲嶆帓</strong>
+        <p>${escapeHtml(state.syncStatusMessage)}</p>
+        <button class="lma-ext-button secondary" data-action="refresh-sync" type="button" ${syncActionDisabled ? 'disabled' : ''}>${escapeHtml(laterRetryActionLabel)}</button>
+      </section>
+    `
+  }
+
+  if (state.syncError) {
+    return `
+      <section class="lma-ext-sync-banner error">
+        <strong>鍚屾澶辫触</strong>
+        <p>${escapeHtml(state.syncError)}</p>
+        <button class="lma-ext-button secondary" data-action="refresh-sync" type="button" ${syncActionDisabled ? 'disabled' : ''}>${escapeHtml(retryActionLabel)}</button>
+      </section>
+    `
+  }
+
+  if (state.isSyncing) {
+    return `
+      <section class="lma-ext-sync-banner loading">
+        <strong>姝ｅ湪鍒嗘瀽閭欢</strong>
+        <p>${escapeHtml(state.syncStatusMessage || '姝ｅ湪璋冪敤鍚庣涓?LLM 鍒嗘瀽鏈€杩戦偖浠垛€?)}</p>
+      </section>
+    `
+  }
+
+  return ''
+}
+
+const renderFilterCard = (section: FilterSectionKey, title: string, summary: string, contentHtml: string) => `
+  <section class="lma-ext-filter-card ${state.expandedSections[section] ? 'is-open' : ''}">
+    <button class="lma-ext-filter-card-toggle" data-action="toggle-filter-section" data-section="${section}" type="button">
+      <div class="lma-ext-filter-card-toggle-copy">
+        <strong>${title}</strong>
+        <span class="lma-ext-filter-card-summary">${summary}</span>
+      </div>
+      <span class="lma-ext-filter-card-arrow ${state.expandedSections[section] ? 'is-open' : ''}">&#9662;</span>
+    </button>
+    <div class="lma-ext-filter-card-content">
+      <div class="lma-ext-filter-card-body">${contentHtml}</div>
+    </div>
+  </section>
+`
+
+const renderSummaryFilters = () => {
+  const senderOptions = getAllSenderOptions()
+  const senderHistory = getSenderHistory()
+  const focusOptions = [...FOCUS_OPTIONS, ...state.customFocusEntries].filter(
+    (focus, index, list) => list.indexOf(focus) === index,
+  )
+  const analysisNote = state.needsRerank ? '鍋忓ソ宸叉洿鏂帮紝鐐瑰嚮閲嶆柊鍒嗘瀽鍚庝細鎸夋柊鍋忓ソ閲嶆帓銆? : '杩欎簺璁剧疆浼氫綔涓?AI 鎺掑簭鎻愮ず锛屼笉浼氱洿鎺ヨ繃婊ゆ帀鍏朵粬閭欢銆?
+  const summary = [
+    `甯哥湅鏀朵欢浜?${senderOptions.length} 浣峘,
+    `鍘嗗彶 ${senderHistory.length} 浣峘,
+    `鍏虫敞 ${focusOptions.length} 椤筦,
+  ].join(' 路 ')
+
+  return `
+    <div class="lma-ext-filter-stack">
+      <div class="lma-ext-filter-hint-row">
+        <p class="lma-ext-filter-hint ${state.needsRerank ? 'is-pending' : ''}">${analysisNote}</p>
+        <button class="lma-ext-button ${state.needsRerank ? 'primary' : 'secondary'}" data-action="rerank-analysis" type="button" ${rerankActionDisabled ? 'disabled' : ''}>${escapeHtml(rerankActionLabel)}</button>
+      </div>
+      ${renderFilterCard(
+        'senders',
+        '鍋忓ソ璁剧疆',
+        summary,
+        `
+          <div class="lma-ext-preference-panel">
+            <section class="lma-ext-preference-group">
+              <div class="lma-ext-preference-head">
+                <strong>甯哥湅鏀朵欢浜?/strong>
+                <span>${senderOptions.length ? `宸茶缃?${senderOptions.length} 浣峘 : '灏氭湭璁剧疆'}</span>
+              </div>
+              <div class="lma-ext-filter-choice-row">
+                ${senderOptions
+                  .map(
+                    (option) => `
+                      <button class="lma-ext-filter-check ${state.selectedSenders.includes(option.value) ? 'is-active' : ''}" data-action="toggle-sender" data-value="${escapeHtml(option.value)}" type="button">
+                        <span>${escapeHtml(option.label)}</span>
+                        ${option.count ? `<em>${option.count}</em>` : ''}
+                      </button>
+                    `,
+                  )
+                  .join('')}
+                <button class="lma-ext-filter-check custom ${state.selectedSenders.includes(CUSTOM_SENDER) ? 'is-active' : ''}" data-action="toggle-sender" data-value="${CUSTOM_SENDER}" type="button">
+                  <span>鑷畾涔?/span>
+                </button>
+              </div>
+              ${state.selectedSenders.includes(CUSTOM_SENDER)
+                ? `
+                    <div class="lma-ext-filter-input-row">
+                      <input class="lma-ext-filter-input" data-action="custom-sender-input" placeholder="杈撳叆鍙戜欢浜烘垨閭" type="text" value="${escapeHtml(state.customSenderValue)}" />
+                      <button class="lma-ext-button secondary" data-action="add-custom-sender" type="button">娣诲姞</button>
+                    </div>
+                  `
+                : ''}
+            </section>
+            <section class="lma-ext-preference-group">
+              <div class="lma-ext-preference-head">
+                <strong>鍘嗗彶鏁版嵁杩借釜</strong>
+                <span>${senderHistory.length ? `宸茶褰?${senderHistory.length} 浣峘 : '鏆傛棤璁板綍'}</span>
+              </div>
+              ${
+                senderHistory.length
+                  ? `
+                      <div class="lma-ext-history-list">
+                        ${senderHistory
+                          .map(
+                            (entry, index) => `
+                              <div class="lma-ext-history-item">
+                                <span class="lma-ext-history-rank">#${index + 1}</span>
+                                <span class="lma-ext-history-name">${escapeHtml(entry.senderName)}</span>
+                                <span class="lma-ext-history-count">${entry.count} 娆?/span>
+                              </div>
+                            `,
+                          )
+                          .join('')}
+                      </div>
+                    `
+                  : '<p class="lma-ext-history-empty">鏌ョ湅鍘熼偖浠跺悗锛岃繖閲屼細鑷姩鏇存柊銆?/p>'
+              }
+            </section>
+            <section class="lma-ext-preference-group">
+              <div class="lma-ext-preference-head">
+                <strong>鎴戝叧娉ㄧ殑</strong>
+                <span>${focusOptions.length ? `宸茶缃?${focusOptions.length} 椤筦 : '灏氭湭璁剧疆'}</span>
+              </div>
+              <div class="lma-ext-filter-choice-row">
+                ${focusOptions
+                  .map(
+                    (focus) => `
+                      <button class="lma-ext-filter-check ${state.selectedFocuses.includes(focus) ? 'is-active' : ''}" data-action="toggle-focus" data-value="${escapeHtml(focus)}" type="button">
+                        <span>${escapeHtml(focus)}</span>
+                      </button>
+                    `,
+                  )
+                  .join('')}
+                <button class="lma-ext-filter-check custom ${state.selectedFocuses.includes(CUSTOM_FOCUS) ? 'is-active' : ''}" data-action="toggle-focus" data-value="${CUSTOM_FOCUS}" type="button">
+                  <span>鑷畾涔?/span>
+                </button>
+              </div>
+              ${state.selectedFocuses.includes(CUSTOM_FOCUS)
+                ? `<div class="lma-ext-filter-input-row"><input class="lma-ext-filter-input" data-action="custom-focus-input" placeholder="杈撳叆鍏虫敞鏂瑰悜" type="text" value="${escapeHtml(state.customFocusValue)}" /><button class="lma-ext-button secondary" data-action="add-custom-focus" type="button">娣诲姞</button></div>`
+                : ''}
+            </section>
+          </div>
+        `,
+      )}
+    </div>
+  `
+}
+
+const renderOverviewGrid = () => {
+  const counts = getOverviewCounts()
+
+  return `
+    <div class="lma-ext-overview-grid">
+      <button class="lma-ext-overview-card ${state.activeTab === 'today_focus' ? 'is-active' : ''}" data-action="switch-tab" data-tab="today_focus" type="button">
+        <span class="lma-ext-overview-card-label"><i class="high"></i><span>楂樹紭鍏堢骇</span></span>
+        <strong>${counts.highPriorityCount}</strong>
+      </button>
+      <button class="lma-ext-overview-card ${state.activeTab === 'todo' ? 'is-active' : ''}" data-action="switch-tab" data-tab="todo" type="button">
+        <span class="lma-ext-overview-card-label"><i class="todo"></i><span>寰呭鐞?/span></span>
+        <strong>${counts.todoCount}</strong>
+      </button>
+      <button class="lma-ext-overview-card ${state.activeTab === 'due_soon' ? 'is-active' : ''}" data-action="switch-tab" data-tab="due_soon" type="button">
+        <span class="lma-ext-overview-card-label"><i class="due"></i><span>48h 鍒版湡</span></span>
+        <strong>${counts.dueSoon48hCount}</strong>
+      </button>
+      <button class="lma-ext-overview-card ${state.activeTab === 'ignorable' ? 'is-active' : ''}" data-action="switch-tab" data-tab="ignorable" type="button">
+        <span class="lma-ext-overview-card-label"><i class="mute"></i><span>鍙拷鐣?/span></span>
+        <strong>${counts.ignorableCount}</strong>
+      </button>
+    </div>
+  `
+}
+
+const renderMailCard = (mail: MailItem) => `
+  <article class="lma-ext-card ${state.removingMessageIds.includes(mail.messageId) ? 'is-removing' : ''}" data-card-id="mail:${mail.messageId}">
+    <div class="lma-ext-card-layout">
+      <div class="lma-ext-card-main">
+        <div class="lma-ext-card-head">
+          <div class="lma-ext-card-title">
+            ${renderPriorityBadge(mail)}
+            <div>
+              <strong>${escapeHtml(mail.senderName)}</strong>
+              <h4>${escapeHtml(mail.briefSubject)}</h4>
+            </div>
+          </div>
+        </div>
+        <div class="lma-ext-ai-block">
+          ${
+            state.resummarizingMessageIds.includes(mail.messageId)
+              ? '<p class="lma-ext-ai-status">LLM 姝ｅ湪閲嶆柊姒傝堪杩欏皝閭欢鈥?/p>'
+              : ''
+          }
+          <p class="lma-ext-ai-summary">${escapeHtml(mail.aiSummary)}</p>
+        </div>
+      </div>
+      <aside class="lma-ext-card-side">
+        ${
+          mail.deadlineLabel || mail.timeText
+            ? `<div class="lma-ext-card-side-group">
+                ${mail.deadlineLabel ? `<span class="lma-ext-chip lma-ext-chip-warn">${escapeHtml(mail.deadlineLabel)}</span>` : ''}
+                ${!mail.deadlineLabel && mail.timeText ? `<span class="lma-ext-chip lma-ext-chip-muted">${escapeHtml(mail.timeText)}</span>` : ''}
+              </div>`
+            : ''
+        }
+        ${
+          mail.actionLabel
+            ? `<div class="lma-ext-card-side-group">
+                <span class="lma-ext-chip lma-ext-chip-accent">${escapeHtml(mail.actionLabel)}</span>
+              </div>`
+            : ''
+        }
+        ${
+          mail.reasonTags.length
+            ? `<div class="lma-ext-card-side-group">
+                ${mail.reasonTags.map((tag) => `<span class="lma-ext-chip lma-ext-chip-muted">${escapeHtml(tag)}</span>`).join('')}
+              </div>`
+            : ''
+        }
+      </aside>
+    </div>
+    <div class="lma-ext-actions">
+      <button class="lma-ext-button primary" data-action="open-original" data-message-id="${mail.messageId}" data-thread-id="${mail.threadId}" data-sender-name="${escapeHtml(mail.senderName)}" data-subject="${escapeHtml(mail.subject)}" type="button">鏌ョ湅鍘熼偖浠?/button>
+      <button class="lma-ext-button ghost" data-action="resummarize-mail" data-message-id="${mail.messageId}" type="button" ${state.resummarizingMessageIds.includes(mail.messageId) ? 'disabled' : ''}>${state.resummarizingMessageIds.includes(mail.messageId) ? '閲嶆柊姒傝堪涓€? : '閲嶆柊姒傝堪'}</button>
+      <button class="lma-ext-button secondary" data-action="mark-done" data-message-id="${mail.messageId}" type="button">鏍囪宸插鐞?/button>
+      </div>
+    ${renderFeedbackRow(mail.senderName, mail.messageId)}
+  </article>
+`
+
+const renderBundleCard = (entry: Extract<VisibleEntry, { kind: 'bundle' }>) => `
+  <article class="lma-ext-card lma-ext-card-bundle" data-card-id="bundle:${entry.key}">
+    <div class="lma-ext-card-head">
+      <div class="lma-ext-card-title">
+        <span class="lma-ext-priority low">${priorityGlyph('low')}</span>
+        <div>
+          <strong>${escapeHtml(entry.items[0].senderName)}</strong>
+          <h4>${escapeHtml(entry.items[0].briefSubject || '鐩镐技閭欢姹囨€?)}</h4>
+        </div>
+      </div>
+      <span class="lma-ext-count">${entry.items.length}</span>
+    </div>
+    <div class="lma-ext-ai-block">
+      <p class="lma-ext-ai-summary">${entry.items.length} 灏佺浉浼奸偖浠跺凡鍚堝苟銆?{escapeHtml(entry.items[0].aiSummary)}</p>
+    </div>
+    <div class="lma-ext-bundle-preview">
+      ${entry.items
+        .slice(0, 3)
+        .map(
+          (mail) => `
+            <div class="lma-ext-bundle-row">
+              <span>${escapeHtml(mail.subject)}</span>
+              <span>${escapeHtml(mail.timeText)}</span>
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+    ${
+      state.expandedBundleKey === entry.key
+        ? `
+            <div class="lma-ext-bundle-list">
+              ${entry.items
+                .map(
+                  (mail) => `
+                    <div class="lma-ext-bundle-item">
+                      <div>
+                        <strong>${escapeHtml(mail.subject)}</strong>
+                        <span>${escapeHtml(mail.timeText)}</span>
+                      </div>
+                        <button class="lma-ext-button ghost" data-action="open-original" data-message-id="${mail.messageId}" data-thread-id="${mail.threadId}" data-sender-name="${escapeHtml(mail.senderName)}" data-subject="${escapeHtml(mail.subject)}" type="button">鎵撳紑</button>
+                    </div>
+                  `,
+                )
+                .join('')}
+            </div>
+          `
+        : ''
+    }
+    <div class="lma-ext-actions">
+      <button class="lma-ext-button primary" data-action="toggle-bundle" data-bundle-key="${escapeHtml(entry.key)}" type="button">${state.expandedBundleKey === entry.key ? '鏀惰捣鍒楄〃' : `鏌ョ湅 ${entry.items.length} 灏乣}</button>
+    </div>
+    ${renderFeedbackRow(entry.items[0].senderName, entry.items[0].messageId)}
+  </article>
+`
+
+const renderListView = () => {
+  const sections = getSectionedEntries()
+
+  return `
+    <div class="lma-ext-panel-body">
+      ${renderSyncBanner()}
+      ${renderSummaryFilters()}
+      ${renderOverviewGrid()}
+      <div class="lma-ext-content-shell">
+        <div class="lma-ext-content">
+          ${sections
+            .map(
+              (section) => `
+                <section class="lma-ext-section">
+                  <header class="lma-ext-section-head">
+                    <h3>${escapeHtml(section.title)}</h3>
+                    <span class="lma-ext-count">${section.entries.length}</span>
+                  </header>
+                  <div class="lma-ext-stack">
+                    ${
+                      section.entries.length
+                        ? section.entries.map((entry) => (entry.kind === 'single' ? renderMailCard(entry.item) : renderBundleCard(entry))).join('')
+                        : '<div class="lma-ext-empty">褰撳墠绛涢€夋潯浠朵笅鏆傛棤鍐呭銆?/div>'
+                    }
+                  </div>
+                </section>
+              `,
+            )
+            .join('')}
+        </div>
+      </div>
+    </div>
+  `
+}
+
+const ensureRoot = () => {
+  let root = document.getElementById(ROOT_ID)
+
+  if (root instanceof HTMLElement && root.dataset.instanceId === INSTANCE_ID) {
+    return root
+  }
+
+  if (root) {
+    root.remove()
+  }
+
+  for (const staleRoot of Array.from(document.querySelectorAll<HTMLElement>(`#${ROOT_ID}`))) {
+    staleRoot.remove()
+  }
+
+  root = document.createElement('div')
+  root.id = ROOT_ID
+  root.dataset.instanceId = INSTANCE_ID
+  document.body.appendChild(root)
+
+  root.addEventListener(
+    'wheel',
+    (event) => {
+      if ((event.target as HTMLElement).closest('.lma-ext-panel')) {
+        event.stopPropagation()
+      }
+    },
+    { passive: true },
+  )
+
+  root.addEventListener('pointerdown', (event) => {
+    if ((event.target as HTMLElement).closest('.lma-ext-panel')) {
+      event.stopPropagation()
+    }
+  })
+
+  root.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]')
+    if (!target) {
+      return
+    }
+
+    const action = target.dataset.action
+
+    if (action === 'toggle-panel') {
+      if (state.isOpen) {
+        state.isOpen = false
+        render()
+      } else {
+        void openPanel()
+      }
+      return
+    }
+
+    if (action === 'close-panel') {
+      state.isOpen = false
+      render()
+      return
+    }
+
+    if (action === 'switch-tab') {
+      const tab = target.dataset.tab as TabKey | undefined
+      if (tab) {
+        state.activeTab = tab
+        state.expandedBundleKey = null
+        syncPersistedState()
+        render()
+      }
+      return
+    }
+
+    if (action === 'toggle-bundle') {
+      const bundleKey = target.dataset.bundleKey
+      if (bundleKey) {
+        state.expandedBundleKey = state.expandedBundleKey === bundleKey ? null : bundleKey
+        render()
+      }
+      return
+    }
+
+    if (action === 'toggle-filter-section') {
+      const section = target.dataset.section as FilterSectionKey | undefined
+      if (section) {
+        state.expandedSections = {
+          ...state.expandedSections,
+          [section]: !state.expandedSections[section],
+        }
+        render()
+      }
+      return
+    }
+
+    if (action === 'toggle-sender') {
+      const value = target.dataset.value
+      if (value) {
+        state.selectedSenders = toggleSelection(state.selectedSenders, value)
+        syncPersistedState()
+        markNeedsRerank()
+        render()
+      }
+      return
+    }
+
+    if (action === 'toggle-focus') {
+      const value = target.dataset.value
+      if (value) {
+        state.selectedFocuses = toggleSelection(state.selectedFocuses, value)
+        syncPersistedState()
+        markNeedsRerank()
+        render()
+      }
+      return
+    }
+
+    if (action === 'add-custom-sender') {
+      const value = state.customSenderValue.trim()
+      if (!value) {
+        return
+      }
+
+      if (!state.customSenderEntries.includes(value)) {
+        state.customSenderEntries = [...state.customSenderEntries, value]
+      }
+
+      state.selectedSenders = Array.from(new Set([...state.selectedSenders.filter((item) => item !== CUSTOM_SENDER), value]))
+      state.customSenderValue = ''
+      syncPersistedState()
+      markNeedsRerank()
+      render()
+      return
+    }
+
+    if (action === 'add-custom-focus') {
+      const value = state.customFocusValue.trim()
+      if (!value) {
+        return
+      }
+
+      if (!state.customFocusEntries.includes(value)) {
+        state.customFocusEntries = [...state.customFocusEntries, value]
+      }
+
+      state.selectedFocuses = Array.from(new Set([...state.selectedFocuses.filter((item) => item !== CUSTOM_FOCUS), value]))
+      state.customFocusValue = ''
+      syncPersistedState()
+      markNeedsRerank()
+      render()
+      return
+    }
+
+    if (action === 'open-original') {
+      const messageId = target.dataset.messageId
+      const threadId = target.dataset.threadId
+      const senderName = target.dataset.senderName
+      const subject = target.dataset.subject
+      if (!messageId || !threadId) {
+        return
+      }
+
+      const mail = getSourceMailItems().find((item) => item.messageId === messageId || item.threadId === threadId)
+      if (mail) {
+        state.clickCounts = {
+          ...state.clickCounts,
+          [mail.senderName]: (state.clickCounts[mail.senderName] ?? 0) + 1,
+        }
+        const previous = state.analysisHistory[mail.messageId]
+        state.analysisHistory[mail.messageId] = {
+          ...(previous ?? {
+            messageId: mail.messageId,
+            threadId: mail.threadId,
+            senderName: mail.senderName,
+            senderEmail: mail.senderEmail,
+            subject: mail.subject,
+            briefSubject: mail.briefSubject,
+            summary: mail.summary,
+            aiSummary: mail.aiSummary,
+            aiReason: mail.aiReason,
+            actionLabel: mail.actionLabel,
+            reasonTags: mail.reasonTags,
+            focusAreas: mail.focusAreas,
+            aggregationKey: mail.aggregationKey,
+            aggregationLabel: undefined,
+            priority: mail.priority,
+            tab: mail.tab,
+            isHighPriority: mail.isHighPriority,
+            isTodo: mail.isTodo,
+            isDueSoon: mail.isDueSoon,
+            isIgnorable: mail.isIgnorable,
+            sortScore: mail.sortScore,
+            deadlineLabel: mail.deadlineLabel,
+            processed: false,
+            lastAnalyzedAt: new Date().toISOString(),
+          }),
+          openedCount: (previous?.openedCount ?? 0) + 1,
+        }
+        syncPersistedState()
+      }
+
+      if (openOriginalMail(messageId, threadId, senderName, subject)) {
+        render()
+      }
+      return
+    }
+
+    if (action === 'mark-done') {
+      const messageId = target.dataset.messageId
+      if (!messageId) {
+        return
+      }
+
+      const mail = getSourceMailItems().find((item) => item.messageId === messageId)
+      if (mail) {
+        state.clickCounts = {
+          ...state.clickCounts,
+          [mail.senderName]: (state.clickCounts[mail.senderName] ?? 0) + 1,
+        }
+        state.processedMessageIds = Array.from(new Set([...state.processedMessageIds, messageId]))
+        const previous = state.analysisHistory[messageId]
+        state.analysisHistory[messageId] = {
+          ...(previous ?? {
+            messageId: mail.messageId,
+            threadId: mail.threadId,
+            senderName: mail.senderName,
+            senderEmail: mail.senderEmail,
+            subject: mail.subject,
+            briefSubject: mail.briefSubject,
+            summary: mail.summary,
+            aiSummary: mail.aiSummary,
+            aiReason: mail.aiReason,
+            actionLabel: mail.actionLabel,
+            reasonTags: mail.reasonTags,
+            focusAreas: mail.focusAreas,
+            aggregationKey: mail.aggregationKey,
+            aggregationLabel: undefined,
+            priority: mail.priority,
+            tab: mail.tab,
+            isHighPriority: mail.isHighPriority,
+            isTodo: mail.isTodo,
+            isDueSoon: mail.isDueSoon,
+            isIgnorable: mail.isIgnorable,
+            sortScore: mail.sortScore,
+            deadlineLabel: mail.deadlineLabel,
+            openedCount: 0,
+            lastAnalyzedAt: new Date().toISOString(),
+          }),
+          processed: true,
+        }
+        syncPersistedState()
+        render()
+      }
+      return
+    }
+
+    if (action === 'resummarize-mail') {
+      const messageId = target.dataset.messageId
+      if (!messageId || state.resummarizingMessageIds.includes(messageId)) {
+        return
+      }
+
+      state.resummarizingMessageIds = [...state.resummarizingMessageIds, messageId]
+      queueViewportRestore({ cardId: `mail:${messageId}`, behavior: 'preserve' })
+      render()
+
+      void sendRuntimeMessage({
+        type: 'LMA_REFRESH_MAIL_SUMMARY',
+        messageId,
+        hints: {
+          ...buildSyncHints('incremental'),
+          analysisMode: 'resummary',
+          recentHistory: (() => {
+            const currentMail = getSourceMailItems().find((item) => item.messageId === messageId)
+            const previousHistoryEntry = state.analysisHistory[messageId]
+            if (!currentMail) {
+              return []
+            }
+
+            return [
+              state.analysisHistory[messageId] ?? {
+                messageId: currentMail.messageId,
+                threadId: currentMail.threadId,
+                senderName: currentMail.senderName,
+                senderEmail: currentMail.senderEmail,
+                subject: currentMail.subject,
+                briefSubject: currentMail.briefSubject,
+                summary: currentMail.summary,
+                aiSummary: currentMail.aiSummary,
+                aiReason: currentMail.aiReason,
+                deadlineLabel: currentMail.deadlineLabel,
+                actionLabel: currentMail.actionLabel,
+                reasonTags: currentMail.reasonTags,
+                focusAreas: currentMail.focusAreas,
+                aggregationKey: currentMail.aggregationKey,
+                aggregationLabel: currentMail.aggregationLabel,
+                priority: currentMail.priority,
+                tab: currentMail.tab,
+                isHighPriority: currentMail.isHighPriority,
+                isTodo: currentMail.isTodo,
+                isDueSoon: currentMail.isDueSoon,
+                isIgnorable: currentMail.isIgnorable,
+                sortScore: currentMail.sortScore,
+                openedCount: state.clickCounts[currentMail.senderName] ?? 0,
+                processed: state.processedMessageIds.includes(currentMail.messageId),
+                feedback: previousHistoryEntry?.feedback,
+                lastAnalyzedAt: new Date().toISOString(),
+              },
+            ]
+          })(),
+        },
+      }).then((response) => {
+        state.resummarizingMessageIds = state.resummarizingMessageIds.filter((id) => id !== messageId)
+
+        if (response.accountKey) {
+          state.currentAccountKey = response.accountKey
+          persistedStore.lastAccountKey = response.accountKey
+          applyPersistedAccountState(getPersistedAccountState(response.accountKey))
+        }
+
+        if (response.ok && response.payload?.items?.[0]) {
+          const item = response.payload.items[0]
+          const currentMail = getSourceMailItems().find((mail) => mail.messageId === item.messageId)
+          const updatedMail: MailItem = {
+            messageId: item.messageId,
+            threadId: item.threadId ?? item.messageId,
+            senderName: item.senderName,
+            senderEmail: item.senderEmail ?? undefined,
+            subject: item.subject,
+            briefSubject: item.briefSubject?.trim() || truncateText(cleanSubjectLine(item.subject), 18) || '鏂伴偖浠?,
+            summary: item.summary,
+            aiSummary: item.aiSummary,
+            aiReason: item.aiReason ?? '',
+            deadlineLabel: item.deadlineLabel ?? undefined,
+            timeText: item.timeText ?? '鏈€杩?,
+            priority: currentMail?.priority ?? item.priority,
+            tab: currentMail?.tab ?? item.tab,
+            isHighPriority: currentMail?.isHighPriority ?? Boolean(item.isHighPriority ?? item.priority === 'high'),
+            isTodo: currentMail?.isTodo ?? Boolean(item.isTodo ?? item.tab === 'todo'),
+            isDueSoon: currentMail?.isDueSoon ?? Boolean(item.isDueSoon ?? item.tab === 'due_soon'),
+            isIgnorable: currentMail?.isIgnorable ?? Boolean(item.isIgnorable ?? item.tab === 'ignorable'),
+            actionLabel: currentMail?.actionLabel ?? item.actionLabel ?? undefined,
+            reasonTags: item.reasonTags,
+            focusAreas: item.focusAreas,
+            aggregationKey: currentMail?.aggregationKey ?? item.aggregationKey ?? undefined,
+            aggregationLabel: currentMail?.aggregationLabel ?? item.aggregationLabel ?? undefined,
+            sortScore: currentMail?.sortScore ?? item.sortScore ?? undefined,
+          }
+
+          replaceMailItem(updatedMail)
+          syncAnalysisHistory([updatedMail], response.payload.generatedAt)
+          state.syncError = ''
+          state.syncStatusMessage = response.message ?? '宸查噸鏂版杩板綋鍓嶉偖浠?
+          syncPersistedState()
+        } else {
+          state.syncError = response.error ?? '閲嶆柊姒傝堪澶辫触'
+        }
+
+        render()
+      })
+      return
+    }
+
+    if (action === 'feedback-important') {
+      const senderName = target.dataset.senderName
+      const messageId = target.dataset.messageId
+      if (senderName) {
+        if (messageId) {
+          preferredFollowCardId = `mail:${messageId}`
+          queueViewportRestore({ cardId: preferredFollowCardId, behavior: 'preserve' })
+        }
+        if (messageId) {
+          const mail = getSourceMailItems().find((item) => item.messageId === messageId)
+          if (mail) {
+            queuePriorityUpgrade(mail)
+          }
+        }
+        applyFeedbackAndRerank(senderName, messageId, 'important', 'important')
+        render()
+      }
+      return
+    }
+
+    if (action === 'feedback-not-important') {
+      const senderName = target.dataset.senderName
+      const messageId = target.dataset.messageId
+      if (senderName) {
+        if (messageId) {
+          preferredFollowCardId = `mail:${messageId}`
+          queueViewportRestore({ cardId: preferredFollowCardId, behavior: 'preserve' })
+        }
+        applyFeedbackAndRerank(senderName, messageId, 'not_important', 'not_important')
+        render()
+      }
+      return
+    }
+
+    if (action === 'feedback-less') {
+      const senderName = target.dataset.senderName
+      const messageId = target.dataset.messageId
+      if (senderName) {
+        if (messageId) {
+          preferredFollowCardId = `mail:${messageId}`
+          queueViewportRestore({ cardId: preferredFollowCardId, behavior: 'preserve' })
+        }
+        applyFeedbackAndRerank(senderName, messageId, 'muted', 'less')
+        render()
+      }
+      return
+    }
+
+    if (action === 'feedback-hide') {
+      const messageId = target.dataset.messageId
+      if (messageId) {
+        preferredFollowCardId = `mail:${messageId}`
+        queueViewportRestore({ cardId: preferredFollowCardId, behavior: 'preserve' })
+        scheduleHideToIgnorable(messageId)
+        render()
+      }
+      return
+    }
+
+    if (action === 'auth-gmail') {
+      void sendRuntimeMessage({ type: 'LMA_AUTH_GMAIL' }).then((response) => {
+        if (response.accountKey) {
+          const accountChanged = state.currentAccountKey !== null && state.currentAccountKey !== response.accountKey
+          if (accountChanged) {
+            state.analysisItems = []
+            state.syncEngine = null
+            state.syncedMailCount = 0
+          }
+          state.currentAccountKey = response.accountKey
+          persistedStore.lastAccountKey = response.accountKey
+          applyPersistedAccountState(getPersistedAccountState(response.accountKey))
+        }
+        state.requiresAuth = Boolean(response.requiresAuth && !response.ok && !state.analysisItems.length)
+        state.syncError = response.error ?? ''
+        state.syncStatusMessage = response.message ?? ''
+        render()
+
+        if (response.ok) {
+          void syncAnalysis('refresh')
+        }
+      })
+      return
+    }
+
+
+    if (action === 'refresh-sync') {
+      tryStartSyncAnalysis('refresh')
+      return
+    }
+
+    if (action === 'rerank-analysis') {
+      tryStartSyncAnalysis('rerank')
+      return
+    }
+  })
+
+  root.addEventListener('input', (event) => {
+    const target = event.target as HTMLInputElement
+
+    if (target.dataset.action === 'custom-sender-input') {
+      state.customSenderValue = target.value
+      return
+    }
+
+    if (target.dataset.action === 'custom-focus-input') {
+      state.customFocusValue = target.value
+    }
+  })
+
+  root.addEventListener('keydown', (event) => {
+    const target = event.target as HTMLInputElement
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    if (target.dataset.action === 'custom-sender-input') {
+      event.preventDefault()
+      root?.querySelector<HTMLElement>('[data-action="add-custom-sender"]')?.click()
+      return
+    }
+
+    if (target.dataset.action === 'custom-focus-input') {
+      event.preventDefault()
+      root?.querySelector<HTMLElement>('[data-action="add-custom-focus"]')?.click()
+    }
+  })
+
+  return root
+}
+
+const render = () => {
+  const root = ensureRoot()
+  if (!queuedViewportAnchor) {
+    queueViewportRestore({ behavior: 'preserve' })
+  }
+  const previousRects = captureCardRects(root)
+  const viewportSnapshot = captureViewportSnapshot(root)
+  const mailCount = state.syncedMailCount || getSourceMailItems().length
+  const syncLine = state.syncEngine
+    ? state.syncEngine === 'llm'
+      ? `宸茬敤 LLM 鍒嗘瀽 ${mailCount} 灏侀偖浠禶
+      : `褰撳墠鐢辫鍒欏紩鎿庡垎鏋?${mailCount} 灏侀偖浠禶
+    : mailCount
+      ? `宸插悓姝ュ綋鍓嶅垪琛?${mailCount} 灏侀偖浠禶
+      : '褰撳墠椤甸潰娌℃湁鍙彁鍙栫殑閭欢鍒楄〃'
+
+  root.innerHTML = `
+    <div class="lma-ext-shell ${state.isOpen ? 'is-open' : ''}">
+      <button class="lma-ext-launcher" data-action="toggle-panel" type="button">
+        <span class="lma-ext-launcher-icon">AI</span>
+        <span class="lma-ext-launcher-copy">閲嶇偣鍔╂墜</span>
+      </button>
+      <aside class="lma-ext-panel ${state.isOpen ? 'is-open' : ''}">
+        <header class="lma-ext-header">
+          <div>
+            <p>閭欢閲嶇偣鍔╂墜</p>
+            <div class="lma-ext-title-row">
+              <h2>甯綘鍏堢湅閲嶈鐨?/h2>
+              <span class="lma-ext-title-meta">${syncLine}</span>
+            </div>
+          </div>
+          <button class="lma-ext-close" data-action="close-panel" type="button">脳</button>
+        </header>
+        ${renderListView()}
+      </aside>
+    </div>
+  `
+
+  restoreViewportSnapshot(root, viewportSnapshot)
+  bindContentScrollFade(root)
+  bindLiquidGlass(root)
+  animateCardReflow(root, previousRects)
+  runViewportFollow(root)
+}
+
+let lastMailListSignature = ''
+
+const refreshWhenMailListChanges = () => {
+  const nextSignature = getMailListSignature()
+
+  if (nextSignature === lastMailListSignature) {
+    return
+  }
+
+  lastMailListSignature = nextSignature
+
+  if (state.isOpen) {
+    if (state.syncEngine || state.requiresAuth) {
+      void syncAnalysis('refresh')
+      return
+    }
+
+    render()
+  }
+}
+
+if (!bootstrapWindow.__LMA_EXT_BOOTSTRAPPED__) {
+  bootstrapWindow.__LMA_EXT_BOOTSTRAPPED__ = true
+
+  for (const staleRoot of Array.from(document.querySelectorAll<HTMLElement>(`#${ROOT_ID}`))) {
+    staleRoot.remove()
+  }
+
+  chromeApi?.runtime?.onMessage?.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+    if (message.type !== 'LMA_TOGGLE_PANEL') {
+      return
+    }
+
+    if (state.isOpen) {
+      state.isOpen = false
+      render()
+    } else {
+      void openPanel()
+    }
+    sendResponse({
+      ok: true,
+      message: state.isOpen ? '宸插睍寮€鍙充晶鍔╂墜銆? : '宸叉敹璧峰彸渚у姪鎵嬨€?,
+    })
+  })
+
+  const observer = new MutationObserver(() => {
+    refreshWhenMailListChanges()
+  })
+
+  observer.observe(document.body, { childList: true, subtree: true })
+  lastMailListSignature = getMailListSignature()
+  loadPersistedState()
+  render()
+}

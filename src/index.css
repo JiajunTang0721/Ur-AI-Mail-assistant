@@ -1,0 +1,56 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  font-family:
+    'Manrope',
+    'Noto Sans SC',
+    'Avenir Next',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 500;
+  color: #162133;
+  background:
+    radial-gradient(circle at top left, rgba(255, 194, 103, 0.42), transparent 26%),
+    radial-gradient(circle at top right, rgba(43, 122, 242, 0.26), transparent 28%),
+    linear-gradient(180deg, #eef3fb 0%, #f8fbff 56%, #eef3fb 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --ink: #162133;
+  --ink-soft: #30415f;
+  --muted: #6b7a92;
+  --accent: #2b7af2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  appearance: none;
+}
+
+a {
+  color: inherit;
+}
