@@ -3,10 +3,17 @@
 Mail assistant 是一个面向 Gmail 的智能邮箱整理助手。  
 它不是简单地把邮件粗略分类，而是试图把“邮件应该展示在哪里”和“邮件本身有多重要”拆成两个独立维度，通过 **Gmail 原始数据 + 用户偏好 + LLM 特征抽取 + 本地优先级模型 + 用户反馈重训** 的完整链条，为用户提供可解释、可迭代的邮箱整理体验。
 
+## Contributors
+
+- Jiajun Tang https://github.com/JiajunTang0721
+- Ruijia Wang https://github.com/Ruijiawang509
+
 ## Demo Video
 
 [Watch the demo video](./AI%20Email%20Organization%20Assistant.mp4)
+
 or 
+
 https://fragrant-finicky-whippet.clueso.site/share/593aec2f-d2ca-4490-881f-6f8484074ccb
 
 ---
