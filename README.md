@@ -8,7 +8,7 @@ Mail assistant 是一个面向 Gmail 的智能邮箱整理助手。
 - Jiajun Tang https://github.com/JiajunTang0721
 - Ruijia Wang https://github.com/Ruijiawang509
 
-## Demo Video （created by Wang）
+## Demo Video
 
 [Watch the demo video](./AI%20Email%20Organization%20Assistant.mp4)
 
