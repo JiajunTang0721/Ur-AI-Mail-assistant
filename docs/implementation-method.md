@@ -140,15 +140,3 @@ priority_score = sigmoid(bias + Σ(weight_i * feature_i) + sender_feedback_bias 
 - 本地缓存和账号态管理
 
 为了兼容旧原型，它还做了旧命名与新命名之间的映射。
-
-## 7. 为什么这个方案适合 GitHub 展示
-
-这个项目适合 GitHub 展示，不是因为“概念好看”，而是因为仓库里已经能看到完整链路：
-
-- 真 Gmail
-- 真扩展
-- 真后端
-- 真方法
-- 真文档
-
-因此在 GitHub 上最值得突出的是“真实可运行链路”和“方法拆分的合理性”。
