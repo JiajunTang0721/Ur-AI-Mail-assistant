@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs'
+import fs from 'node:fs'
 import path from 'node:path'
 import { defineConfig, loadEnv } from 'vite'
 
@@ -36,7 +36,7 @@ const buildManifest = (mode: string) => {
 
   const manifest = {
     manifest_version: 3,
-    name: 'Mail assistant',
+    name: 'Lark Mail Assistant',
     description: 'A Chrome Extension MV3 assistant for Gmail prioritization and AI summaries.',
     version: '0.1.0',
     key: extensionPublicKey,
@@ -51,7 +51,7 @@ const buildManifest = (mode: string) => {
       type: 'module',
     },
     action: {
-      default_title: '閭欢閲嶇偣鍔╂墜',
+      default_title: '邮件重点助手',
     },
     content_scripts: [
       {
@@ -98,4 +98,3 @@ export default defineConfig(({ mode }) => ({
     },
   },
 }))
-

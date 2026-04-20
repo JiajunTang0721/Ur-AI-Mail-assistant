@@ -1,5 +1,5 @@
-﻿{
-  "name": "mail-assistant",
+{
+  "name": "ur-ai-mail-assistant",
   "private": true,
   "version": "0.1.0",
   "description": "A runnable V1 prototype for a Gmail side-panel mail prioritization assistant.",
@@ -31,4 +31,3 @@
     "vite": "^8.0.4"
   }
 }
-

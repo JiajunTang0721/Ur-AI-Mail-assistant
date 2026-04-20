@@ -1,74 +1,112 @@
-# FastAPI Backend
+# Ur-AI-Mail-assistant
 
-这里是 Ur-AI-Mail-assistant 的分析后端。它负责把 Gmail 邮件和本地上下文整理成统一输入，并输出：
+Ur-AI-Mail-assistant 是一个面向 Gmail 的智能邮件整理项目，仓库中同时包含 Chrome Extension MV3、Gmail 页面侧边助手、FastAPI 分析服务，以及一套基于 LLM 特征抽取、规则兜底和本地反馈权重的邮件优先级方法。
 
-- `board_type`
-- `priority_score`
-- `priority_level`
-- `displaySender`
-- `briefSubject`
-- `aiSummary`
-- `aiReason`
+代码中的产品工作名仍然保留 `Lark Mail Assistant / 邮件重点助手`，而 GitHub 展示仓库统一使用 `Ur-AI-Mail-assistant` 作为项目名。这样既保留了现有代码语义，也方便在 GitHub 上做更清晰的项目展示。
 
-## 当前实际提供的接口
+![Assistant UI Preview](./assets/preview/assistant-ui-preview.png)
 
-- `GET /health`
-- `POST /api/v1/analyze/messages`
-- `POST /api/v1/reanalyze`
-- `POST /api/v1/resummary`
-- `POST /api/v1/feedback`
-- `GET /api/v1/feedback/{account_id}`
-- `GET /api/v1/preferences`
-- `POST /api/v1/preferences`
+## 项目当前已经实现的内容
 
-## 当前后端方法
+- Chrome Extension MV3 弹窗、Gmail 页面注入与右侧助手面板
+- Gmail `gmail.readonly` OAuth 授权与最近邮件/线程读取
+- Gmail 原始数据规范化、线程信息补充和批量同步
+- 后端结构化分析接口、健康检查、偏好读写、反馈记录、重新分析、单封邮件重概述
+- OpenAI / Ollama 两种 LLM 来源，以及规则引擎兜底
+- 邮件双维度输出：
+  - `board_type`: `priority_content | within_48h | todo | ignore`
+  - `priority_score / priority_level`
+- 解释字段生成：`displaySender`、`briefSubject`、`aiSummary`、`aiReason`
+- 用户反馈入口：`更重要`、`少显示`
+- 本地偏好与反馈持久化：
+  - 扩展侧：`chrome.storage.local`
+  - 后端侧：`backend/data/preferences.json`、`backend/data/feedback.json`
 
-1. 接收 Gmail 规范化邮件数据。
-2. 合并偏好、历史分析、反馈、重点寄件人和隐藏/已处理状态。
-3. 尝试调用 LLM 输出固定 schema 的结构化特征和展示字段。
-4. 若 LLM 不可用或失败，则使用规则层完成特征抽取和说明生成。
-5. 用一个轻量本地优先级模型计算 `priority_score / priority_level`。
-6. 独立判断 `board_type`，避免把板块和优先级硬绑定成一套标签。
+## 这个项目是怎么工作的
 
-## 关键源码位置
+1. Chrome 扩展在 Gmail 页面挂载右侧助手，并由 `extension/background.ts` 负责 Gmail OAuth、邮件抓取和后端请求。
+2. Gmail 邮件会被整理成统一结构，再与本地偏好、历史分析结果、反馈记录和已处理状态合并。
+3. `backend/app/llm.py` 使用严格 JSON Schema 让 LLM 一次性输出结构化特征和前端展示字段。
+4. `backend/app/rules.py` 会把 LLM 输出和规则特征合并，计算优先级分数，并独立判断 `board_type`。
+5. 前端/扩展面板按板块展示邮件，允许重新分析、刷新摘要和记录反馈。
 
-- `backend/app/main.py`: FastAPI 路由入口
-- `backend/app/schemas.py`: 输入输出 schema
-- `backend/app/llm.py`: OpenAI / Ollama 调用与 JSON Schema
-- `backend/app/rules.py`: 规则、特征、优先级打分、板块判断
-- `backend/app/store.py`: 偏好和反馈 JSON 持久化
+更完整的方法说明见：
 
-## 环境变量
+- [当前状态说明](./docs/current-status.md)
+- [实现方法说明](./docs/implementation-method.md)
+- [功能拆解清单](./docs/feature-breakdown.md)
 
-后端默认读取仓库根目录 `.env`：
+## 当前仓库结构
 
-```env
-OPENAI_API_KEY=你的 OpenAI API Key
-OPENAI_MODEL=gpt-5.4-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_TIMEOUT_SECONDS=45
-LLM_PROVIDER=auto
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=
+```text
+Ur-AI-Mail-assistant/
+├─ assets/                     # GitHub 展示素材
+├─ src/                        # React 原型层
+├─ extension/                  # Chrome Extension MV3 与 Gmail 注入
+├─ backend/                    # FastAPI、规则、LLM、持久化
+├─ docs/                       # 架构、方法、配置、功能文档
+├─ public/                     # 前端静态资源
+├─ package.json                # 前端与扩展构建脚本
+└─ vite.extension.config.ts    # 扩展 manifest 与打包逻辑
 ```
 
-如果要强制使用本地模型：
+## 演示素材
 
-```env
-LLM_PROVIDER=ollama
-OLLAMA_MODEL=qwen2.5:3b
+- Demo 视频：[assistant-demo.mp4](./assets/demo/assistant-demo.mp4)
+- UI 预览图：[`assets/preview/assistant-ui-preview.png`](./assets/preview/assistant-ui-preview.png)
+
+## 快速启动
+
+1. 安装前端依赖
+
+```bash
+npm install
 ```
 
-## 运行方式
+2. 配置环境变量
+
+```bash
+cp .env.example .env
+```
+
+3. 启动后端
 
 ```bash
 python -m pip install -r backend/requirements.txt
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010
 ```
 
-## 数据文件
+4. 构建扩展
 
-- `backend/data/preferences.json`: 默认偏好模板
-- `backend/data/feedback.json`: 空反馈模板
+```bash
+npm run build:extension
+```
 
-这两个文件在当前仓库中已经做过脱敏处理，避免把真实账号数据直接提交到 GitHub。
+5. 在 Chrome 中加载 `dist-extension/`
+
+- 打开 `chrome://extensions`
+- 开启开发者模式
+- 选择“加载已解压的扩展程序”
+- 指向构建后的 `dist-extension/`
+
+## 真实状态说明
+
+- `src/` 目录中的独立 React 原型仍保留了 `today_focus / due_soon / todo / ignorable` 这套旧 tab 命名。
+- `extension/content.ts` 已经实现了旧命名到新板块枚举的兼容映射，并以 `priority_content / within_48h / todo / ignore` 作为主输出。
+- `docs/architecture-v1.md` 与 `docs/api-contract-v1.md` 描述的是迁移基线和目标契约；如果你要看“当前代码实际做了什么”，请优先看 `docs/current-status.md` 与 `backend/app/*.py`。
+- 当前只申请 Gmail 只读权限，不包含邮件修改、发送或删除能力。
+
+## 文档入口
+
+- 项目现状：[docs/current-status.md](./docs/current-status.md)
+- 实现方法：[docs/implementation-method.md](./docs/implementation-method.md)
+- 功能清单：[docs/feature-breakdown.md](./docs/feature-breakdown.md)
+- GitHub 整理说明：[docs/github-refresh-checklist.md](./docs/github-refresh-checklist.md)
+- 项目手册：[docs/project-handbook.md](./docs/project-handbook.md)
+- 架构说明：[docs/architecture-v1.md](./docs/architecture-v1.md)
+- API 契约：[docs/api-contract-v1.md](./docs/api-contract-v1.md)
+- Gmail OAuth 与 OpenAI 配置：[docs/gmail-oauth-openai-setup.md](./docs/gmail-oauth-openai-setup.md)
+- 首次联调自查：[docs/first-run-checklist.md](./docs/first-run-checklist.md)
+- 前端契约：[docs/frontend/frontend-contract-v1.md](./docs/frontend/frontend-contract-v1.md)
+- 前端 Props 契约：[docs/frontend/frontend-props-contract-v1.md](./docs/frontend/frontend-props-contract-v1.md)
+- 前端组件树：[docs/frontend/frontend-component-tree-v1.md](./docs/frontend/frontend-component-tree-v1.md)
