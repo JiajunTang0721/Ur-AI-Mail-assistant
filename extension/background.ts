@@ -1,4 +1,4 @@
-﻿import { API_BASE_URL, GMAIL_INBOX_URL, GMAIL_READONLY_SCOPE, chromeApi } from './chrome'
+import { API_BASE_URL, GMAIL_INBOX_URL, GMAIL_READONLY_SCOPE, chromeApi } from './chrome'
 import type {
   FeedbackPayload,
   RawMessagePayload,
@@ -138,7 +138,7 @@ const sendMessageToTab = (tabId: number, message: RuntimeMessage) =>
       resolve(
         response ?? {
           ok: true,
-          message: '宸插垏鎹?Gmail 鍙充晶鍔╂墜銆?,
+          message: '已切换 Gmail 右侧助手。',
         },
       )
     })
@@ -167,7 +167,7 @@ const toggleAssistantForTab = async (tab?: BrowserTab): Promise<RuntimeResponse>
   if (!tab?.id) {
     return {
       ok: false,
-      error: '娌℃湁妫€娴嬪埌褰撳墠娲诲姩鏍囩椤点€?,
+      error: '没有检测到当前活动标签页。',
     }
   }
 
@@ -175,7 +175,7 @@ const toggleAssistantForTab = async (tab?: BrowserTab): Promise<RuntimeResponse>
     openGmailTab()
     return {
       ok: true,
-      message: '褰撳墠涓嶆槸 Gmail锛屽凡涓轰綘鎵撳紑 Gmail銆?,
+      message: '当前不是 Gmail，已为你打开 Gmail。',
     }
   }
 
@@ -185,7 +185,7 @@ const toggleAssistantForTab = async (tab?: BrowserTab): Promise<RuntimeResponse>
     const errorMessage = error instanceof Error ? error.message : String(error)
     return {
       ok: false,
-      error: `鏆傛椂鏃犳硶杩炴帴 Gmail 椤甸潰锛?{errorMessage}`,
+      error: `暂时无法连接 Gmail 页面：${errorMessage}`,
     }
   }
 }
@@ -210,7 +210,7 @@ const respondWithTask = (
   task
     .then(sendResponse)
     .catch((error) => {
-      console.error('Mail assistant background task failed:', error)
+      console.error('Lark Mail Assistant background task failed:', error)
       sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -221,7 +221,7 @@ const respondWithTask = (
 const getAuthToken = (interactive: boolean) =>
   new Promise<string>((resolve, reject) => {
     if (!chromeApi?.identity?.getAuthToken) {
-      reject(new Error('褰撳墠鐜涓嶆敮鎸?Chrome Identity API銆?))
+      reject(new Error('当前环境不支持 Chrome Identity API。'))
       return
     }
 
@@ -239,7 +239,7 @@ const getAuthToken = (interactive: boolean) =>
         }
 
         if (!token) {
-          reject(new Error('鏈幏鍙栧埌 Gmail 鎺堟潈浠ょ墝銆?))
+          reject(new Error('未获取到 Gmail 授权令牌。'))
           return
         }
 
@@ -379,14 +379,14 @@ const parseSender = (fromHeader: string) => {
   const senderEmail = match?.[2]?.trim() || undefined
 
   return {
-    senderName: senderName || senderEmail || '鏈煡鍙戜欢浜?,
+    senderName: senderName || senderEmail || '未知发件人',
     senderEmail,
   }
 }
 
 const formatTimeText = (value?: string) => {
   if (!value) {
-    return '鏈€杩?
+    return '最近'
   }
 
   const date = new Date(value)
@@ -424,7 +424,7 @@ const toRawMessagePayload = (
   threadMessageCount: number,
 ): RawMessagePayload => {
   const fromHeader = getHeaderValue(message.payload, 'From')
-  const subject = getHeaderValue(message.payload, 'Subject') || '(鏃犳爣棰橀偖浠?'
+  const subject = getHeaderValue(message.payload, 'Subject') || '(无标题邮件)'
   const dateHeader = getHeaderValue(message.payload, 'Date')
   const bodyText = extractBodyText(message.payload)
   const summary = message.snippet?.trim() || bodyText.slice(0, 220)
@@ -529,11 +529,11 @@ const normalizeBackendFetchError = (error: unknown) => {
   const lowerCaseMessage = message.toLowerCase()
 
   if (lowerCaseMessage.includes('failed to fetch')) {
-    return `鏃犳硶杩炴帴鏈湴鍒嗘瀽鍚庣 ${API_BASE_URL}銆傝纭 FastAPI 姝ｅ湪杩愯锛屽苟涓旀墿灞曞凡缁忛噸鏂板姞杞姐€俙
+    return `无法连接本地分析后端 ${API_BASE_URL}。请确认 FastAPI 正在运行，并且扩展已经重新加载。`
   }
 
   if (message.includes('Gmail API 429')) {
-    return 'Gmail 褰撳墠璇锋眰杩囦簬棰戠箒锛岀郴缁熷凡鑷姩闄嶄綆骞跺彂骞跺仛閲嶈瘯锛涘鏋滀粛澶辫触锛岃绋嶅悗鍑犵鍐嶈瘯銆?
+    return 'Gmail 当前请求过于频繁，系统已自动降低并发并做重试；如果仍失败，请稍后几秒再试。'
   }
 
   return message
@@ -568,7 +568,7 @@ const postAnalysis = async (
 
   if (!response.ok) {
     const text = await response.text()
-    throw new Error(`鍚庣鍒嗘瀽鎺ュ彛杩斿洖 ${response.status}: ${text}`)
+    throw new Error(`后端分析接口返回 ${response.status}: ${text}`)
   }
 
   return (await response.json()) as SyncAnalysisPayload
@@ -580,7 +580,7 @@ const syncInboxAnalysis = async (context: SyncContext): Promise<RuntimeResponse>
       ok: false,
       requiresAuth: true,
       error:
-        '杩樻病鏈夐厤缃?Google OAuth Client ID銆傝鍏堝湪 `.env` 涓缃?`VITE_GOOGLE_OAUTH_CLIENT_ID`銆?,
+        '还没有配置 Google OAuth Client ID。请先在 `.env` 中设置 `VITE_GOOGLE_OAUTH_CLIENT_ID`。',
     }
   }
 
@@ -604,8 +604,8 @@ const syncInboxAnalysis = async (context: SyncContext): Promise<RuntimeResponse>
     const mode = context.analysisMode ?? 'incremental'
     const successMessage =
       mode === 'full_reanalyze' || mode === 'rerank'
-        ? `宸查噸鏂板垎鏋愭渶杩?${messages.length} 灏?Gmail 閭欢銆俙
-        : `宸插垎鏋愭渶杩?${messages.length} 灏?Gmail 閭欢銆俙
+        ? `已重新分析最近 ${messages.length} 封 Gmail 邮件。`
+        : `已分析最近 ${messages.length} 封 Gmail 邮件。`
 
     return {
       ok: true,
@@ -617,7 +617,7 @@ const syncInboxAnalysis = async (context: SyncContext): Promise<RuntimeResponse>
     const message = normalizeBackendFetchError(error)
     return {
       ok: false,
-      error: `鍚屾 Gmail 骞跺垎鏋愬け璐ワ細${message}`,
+      error: `同步 Gmail 并分析失败：${message}`,
     }
   }
 }
@@ -631,7 +631,7 @@ const refreshSingleMailSummary = async (
       ok: false,
       requiresAuth: true,
       error:
-        '杩樻病鏈夐厤缃?Google OAuth Client ID銆傝鍏堝湪 `.env` 涓缃?`VITE_GOOGLE_OAUTH_CLIENT_ID`銆?,
+        '还没有配置 Google OAuth Client ID。请先在 `.env` 中设置 `VITE_GOOGLE_OAUTH_CLIENT_ID`。',
     }
   }
 
@@ -671,14 +671,14 @@ const refreshSingleMailSummary = async (
 
     if (!response.ok) {
       const text = await response.text()
-      throw new Error(`鍚庣閲嶆柊姒傝堪鎺ュ彛杩斿洖 ${response.status}: ${text}`)
+      throw new Error(`后端重新概述接口返回 ${response.status}: ${text}`)
     }
 
     const summaryUpdate = (await response.json()) as ResummaryApiResponse
 
     return {
       ok: true,
-      message: '宸查噸鏂版杩板綋鍓嶉偖浠躲€?,
+      message: '已重新概述当前邮件。',
       accountKey: accountKey || undefined,
       summaryUpdate,
     }
@@ -686,7 +686,7 @@ const refreshSingleMailSummary = async (
     const message = normalizeBackendFetchError(error)
     return {
       ok: false,
-      error: `閲嶆柊姒傝堪澶辫触锛?{message}`,
+      error: `重新概述失败：${message}`,
     }
   }
 }
@@ -703,14 +703,14 @@ const recordFeedback = async (payload: FeedbackPayload): Promise<RuntimeResponse
 
     if (!response.ok) {
       const text = await response.text()
-      throw new Error(`鍚庣鍙嶉鎺ュ彛杩斿洖 ${response.status}: ${text}`)
+      throw new Error(`后端反馈接口返回 ${response.status}: ${text}`)
     }
 
     const result = (await response.json()) as FeedbackApiResponse
 
     return {
       ok: true,
-      message: '鍙嶉宸茶褰曪紝閲嶆柊鍒嗘瀽鍚庝細杩涘叆璁粌鏍锋湰銆?,
+      message: '反馈已记录，重新分析后会进入训练样本。',
       feedback: {
         moreImportantCount: result.moreImportantCount,
         showLessCount: result.showLessCount,
@@ -721,7 +721,7 @@ const recordFeedback = async (payload: FeedbackPayload): Promise<RuntimeResponse
     const message = normalizeBackendFetchError(error)
     return {
       ok: false,
-      error: `璁板綍鍙嶉澶辫触锛?{message}`,
+      error: `记录反馈失败：${message}`,
     }
   }
 }
@@ -732,7 +732,7 @@ const authorizeGmail = async (): Promise<RuntimeResponse> => {
       ok: false,
       requiresAuth: true,
       error:
-        '杩樻病鏈夐厤缃?Google OAuth Client ID銆傝鍏堝湪 `.env` 涓缃?`VITE_GOOGLE_OAUTH_CLIENT_ID`銆?,
+        '还没有配置 Google OAuth Client ID。请先在 `.env` 中设置 `VITE_GOOGLE_OAUTH_CLIENT_ID`。',
     }
   }
 
@@ -741,7 +741,7 @@ const authorizeGmail = async (): Promise<RuntimeResponse> => {
     const profile = await fetchGmailProfile(token)
     return {
       ok: true,
-      message: 'Gmail 鎺堟潈鎴愬姛銆?,
+      message: 'Gmail 授权成功。',
       accountKey: profile.emailAddress ?? undefined,
     }
   } catch (error) {
@@ -749,7 +749,7 @@ const authorizeGmail = async (): Promise<RuntimeResponse> => {
     return {
       ok: false,
       requiresAuth: true,
-      error: `Gmail 鎺堟潈澶辫触锛?{message}`,
+      error: `Gmail 授权失败：${message}`,
     }
   }
 }
@@ -760,7 +760,7 @@ const getGmailAuthState = async (): Promise<RuntimeResponse> => {
       ok: false,
       requiresAuth: true,
       error:
-        '杩樻病鏈夐厤缃?Google OAuth Client ID銆傝鍏堝湪 `.env` 涓缃?`VITE_GOOGLE_OAUTH_CLIENT_ID`銆?,
+        '还没有配置 Google OAuth Client ID。请先在 `.env` 中设置 `VITE_GOOGLE_OAUTH_CLIENT_ID`。',
     }
   }
 
@@ -769,20 +769,20 @@ const getGmailAuthState = async (): Promise<RuntimeResponse> => {
     const profile = await fetchGmailProfile(token)
     return {
       ok: true,
-      message: 'Gmail 宸叉巿鏉冦€?,
+      message: 'Gmail 已授权。',
       accountKey: profile.emailAddress ?? undefined,
     }
   } catch {
     return {
       ok: false,
       requiresAuth: true,
-      error: '褰撳墠杩樻病鏈?Gmail 鎺堟潈锛岃鍏堣繛鎺?Gmail銆?,
+      error: '当前还没有 Gmail 授权，请先连接 Gmail。',
     }
   }
 }
 
 chromeApi?.runtime?.onInstalled?.addListener(() => {
-  console.info('Mail assistant MV3 installed.')
+  console.info('Lark Mail Assistant MV3 installed.')
 })
 
 chromeApi?.action?.onClicked?.addListener(async (tab) => {
@@ -796,7 +796,7 @@ chromeApi?.runtime?.onMessage?.addListener(
         openGmailTab()
         sendResponse({
           ok: true,
-          message: '宸叉墦寮€ Gmail銆?,
+          message: '已打开 Gmail。',
         })
         return
       }
@@ -833,7 +833,7 @@ chromeApi?.runtime?.onMessage?.addListener(
 
       return
     } catch (error) {
-      console.error('Mail assistant background message handler crashed:', error)
+      console.error('Lark Mail Assistant background message handler crashed:', error)
       sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -842,4 +842,3 @@ chromeApi?.runtime?.onMessage?.addListener(
     }
   },
 )
-

@@ -1,13 +1,13 @@
-﻿{
+{
   "manifest_version": 3,
-  "name": "Mail assistant",
+  "name": "Lark Mail Assistant",
   "description": "A Chrome Extension MV3 assistant for Gmail prioritization and AI summaries.",
   "version": "0.1.0",
   "permissions": ["storage", "tabs", "scripting", "identity"],
   "host_permissions": [
     "https://mail.google.com/*",
     "https://gmail.googleapis.com/*",
-    "http://127.0.0.1:8000/*"
+    "http://127.0.0.1:8010/*"
   ],
   "oauth2": {
     "client_id": "REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
@@ -18,7 +18,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "閭欢閲嶇偣鍔╂墜"
+    "default_title": "邮件重点助手"
   },
   "content_scripts": [
     {
@@ -29,4 +29,3 @@
     }
   ]
 }
-
