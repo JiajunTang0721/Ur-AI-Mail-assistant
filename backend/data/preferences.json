@@ -1,0 +1,18 @@
+{
+  "focusTopics": [
+    "招聘",
+    "工作",
+    "学业"
+  ],
+  "focusOrder": [
+    "招聘",
+    "工作",
+    "学业"
+  ],
+  "vipSenders": [],
+  "customFocusItems": [],
+  "notImportantSenders": [],
+  "mutedSenders": [],
+  "processedMessageIds": [],
+  "defaultBoard": "priority_content"
+}

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import UTC, datetime
 
@@ -17,7 +17,7 @@ from .schemas import (
 )
 from .store import append_feedback_record, load_feedback_records, load_preferences, save_preferences
 
-app = FastAPI(title="Mail assistant API", version="0.2.0")
+app = FastAPI(title="Lark Mail Assistant API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,4 +78,3 @@ def get_preferences() -> Preferences:
 @app.post("/api/v1/preferences", response_model=Preferences)
 def post_preferences(preferences: Preferences) -> Preferences:
     return save_preferences(preferences)
-

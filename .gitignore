@@ -7,11 +7,25 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Frontend / build output
 node_modules
 dist
 dist-extension
 dist-ssr
 *.local
+*.zip
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+extension-private-key.pem
+extension-public-key.txt
+
+# Python
+.venv
+__pycache__/
+*.py[cod]
 
 # Editor directories and files
 .vscode/*
