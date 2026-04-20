@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import './App.css'
 import { AssistantPanel } from './components/AssistantPanel'
 import { GmailWorkspace } from './components/GmailWorkspace'
@@ -16,7 +16,7 @@ import type { ItemStatus, OpenSource, SenderOption, TabKey } from './types'
 const DEFAULT_TAB: TabKey = 'today_focus'
 const CUSTOM_SENDER = '__custom_sender__'
 const CUSTOM_FOCUS = '__custom_focus__'
-const FOCUS_OPTIONS = ['鎷涜仒', '宸ヤ綔', '瀛︿笟']
+const FOCUS_OPTIONS = ['招聘', '工作', '学业']
 
 function App() {
   const [isExpanded, setIsExpanded] = useState(true)
@@ -53,10 +53,10 @@ function App() {
     : undefined
 
   const surfaceState = !isExpanded
-    ? '鏀惰捣鎬?
+    ? '收起态'
     : selectedMessageId
-      ? '璇︽儏鑱斿姩鎬?
-      : '灞曞紑鎬?
+      ? '详情联动态'
+      : '展开态'
 
   const toggleSelection = (
     value: string,
@@ -97,12 +97,12 @@ function App() {
       ...current,
       [messageId]: 'done',
     }))
-    setFeedbackNote(`宸插皢鈥?{describeMail(messageId)}鈥濇爣璁颁负宸插鐞嗐€俙)
+    setFeedbackNote(`已将“${describeMail(messageId)}”标记为已处理。`)
   }
 
   const handleMuteSimilar = (messageId: string) => {
     const mail = getMailRecord(messageId, statusMap)
-    setFeedbackNote(`鍚庣画浼氬噺灏戔€?{mail?.senderName ?? '璇ユ潵婧?}鈥濊繖绫婚偖浠剁殑鎻愰啋棰戞銆俙)
+    setFeedbackNote(`后续会减少“${mail?.senderName ?? '该来源'}”这类邮件的提醒频次。`)
   }
 
   const handleResetDemo = () => {
@@ -149,20 +149,22 @@ function App() {
 
       <header className="story-header">
         <div className="story-copy">
-          <p className="eyebrow">Mail assistant / Gmail Side Panel V1</p>
-          <h1>閭欢閲嶇偣鍔╂墜</h1>
+          <p className="eyebrow">Lark Mail Assistant / Gmail Side Panel V1</p>
+          <h1>邮件重点助手</h1>
           <p className="story-summary">
-            杩欐槸涓€鐗?Gmail 渚ц竟鍔╂墜婕旂ず锛岄噸鐐瑰睍绀哄父鐪嬫敹浠朵汉銆佸叧娉ㄤ富棰樸€侀偖浠朵紭鍏堢骇瀵艰埅鍜岀浉浼奸偖浠惰仛鍚堛€?            鍙充晶闈㈡澘鐜板湪鍙繚鐣欎竴濂楃畝娲佸鑸紝涓嶅啀閲嶅灞曠ず澶氫釜鍏ュ彛銆?          </p>
+            这是一版 Gmail 侧边助手演示，重点展示常看收件人、关注主题、邮件优先级导航和相似邮件聚合。
+            右侧面板现在只保留一套简洁导航，不再重复展示多个入口。
+          </p>
         </div>
 
         <div className="story-actions">
           <button className="ghost-button" type="button" onClick={handleResetDemo}>
-            閲嶇疆婕旂ず
+            重置演示
           </button>
           <div className="story-pills">
             <span className="story-pill strong">{surfaceState}</span>
-            <span className="story-pill">楂樹紭鍏堢骇 {panelData.overview.highPriorityCount}</span>
-            <span className="story-pill">寰呭鐞?{panelData.overview.todoCount}</span>
+            <span className="story-pill">高优先级 {panelData.overview.highPriorityCount}</span>
+            <span className="story-pill">待处理 {panelData.overview.todoCount}</span>
           </div>
         </div>
       </header>
@@ -218,13 +220,13 @@ function App() {
                 }
                 onCustomFocusChange={setCustomFocus}
                 onFeedbackImportant={(messageId) =>
-                  setFeedbackNote(`宸茶褰曪細鎻愰珮鈥?{describeMail(messageId)}鈥濊繖绫婚偖浠剁殑鎻愰啋鏉冮噸銆俙)
+                  setFeedbackNote(`已记录：提高“${describeMail(messageId)}”这类邮件的提醒权重。`)
                 }
                 onFeedbackNotImportant={(messageId) =>
-                  setFeedbackNote(`宸茶褰曪細闄嶄綆鈥?{describeMail(messageId)}鈥濊繖绫婚偖浠剁殑浼樺厛绾с€俙)
+                  setFeedbackNote(`已记录：降低“${describeMail(messageId)}”这类邮件的优先级。`)
                 }
                 onFeedbackLess={(messageId) =>
-                  setFeedbackNote(`宸茶褰曪細鍚庣画灏戞彁閱掍笌鈥?{describeMail(messageId)}鈥濈浉浼肩殑鍐呭銆俙)
+                  setFeedbackNote(`已记录：后续少提醒与“${describeMail(messageId)}”相似的内容。`)
                 }
               />
             ) : (
@@ -232,10 +234,10 @@ function App() {
                 className="assistant-launcher"
                 type="button"
                 onClick={() => setIsExpanded(true)}
-                aria-label="灞曞紑閭欢閲嶇偣鍔╂墜"
+                aria-label="展开邮件重点助手"
               >
                 <span className="assistant-launcher-icon">AI</span>
-                <span className="assistant-launcher-text">鍔╂墜</span>
+                <span className="assistant-launcher-text">助手</span>
                 <span className="assistant-launcher-count">
                   {panelData.overview.highPriorityCount}
                 </span>
@@ -249,4 +251,3 @@ function App() {
 }
 
 export default App
-
